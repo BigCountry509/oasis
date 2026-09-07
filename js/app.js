@@ -216,9 +216,6 @@ function applyJobDefaults() {
 
   const rowSpacing = $('#row-spacing');
   if (state.sprayerType === 'airblast' && !rowSpacing.value) rowSpacing.value = 20;
-
-  /* Only fertilizer jobs care what the tank load weighs. */
-  $('#solution-field').hidden = !(job.solutionWeight && state.sprayerType === 'boom');
 }
 
 function syncFormForSprayer() {
@@ -272,12 +269,11 @@ function readForm() {
   if (state.sprayerType === 'airblast') {
     input.rowSpacingFeet = num($('#row-spacing'));
     input.sides = $('#sides').value;
-    input.positionsPerSide = num($('#positions')) || 5;
-    input.topShare = (num($('#top-share')) || 70) / 100;
+    input.positionsPerSide = num($('#positions')) || 8;
+    input.topShare = 0.7;
   } else {
     input.spacingInches = num($('#spacing'));
-    input.tipsPerRow = num($('#tips-per-row')) || 1;
-    if (job?.solutionWeight) input.solutionLbPerGal = num($('#solution-weight'));
+    input.tipsPerRow = 1;
   }
 
   const problems = [];
@@ -296,9 +292,20 @@ function readForm() {
 
 /* ---------------- rendering results ---------------- */
 
-function dropletBadge(dropletClass, exact = true, fromPsi = null) {
-  /* Streamer bars have no droplet spectrum, so there is nothing to classify. */
+function dropletBadge(dropletClass, exact = true, fromPsi = null, kind = null) {
   if (!dropletClass) {
+    if (kind === 'disc-core') {
+      return el(
+        'span',
+        {
+          class: 'droplet-badge',
+          style: 'color:#c4a35a;border-color:#c4a35a;background:#c4a35a1f',
+          title: 'TeeJet publishes no droplet class for a disc and core. The pick is on flow.',
+        },
+        el('span', { class: 'droplet-dot', style: 'background:#c4a35a' }),
+        'Disc-core',
+      );
+    }
     return el(
       'span',
       {
@@ -480,7 +487,7 @@ function renderBoomResult(result, index, output) {
         el('h3', { class: 'result-part', text: tip.partNo }),
         el('div', { class: 'result-series', text: tip.seriesName }),
       ),
-      dropletBadge(result.dropletClass, result.dropletExact, result.dropletFromPsi),
+      dropletBadge(result.dropletClass, result.dropletExact, result.dropletFromPsi, tip.pattern),
     ),
 
     readout([
@@ -592,7 +599,7 @@ function renderAirblastResult(option, index, output) {
       el(
         'div',
         { style: 'text-align:right' },
-        dropletBadge(option.dropletClass, option.dropletExact, option.dropletFromPsi),
+        dropletBadge(option.dropletClass, option.dropletExact, option.dropletFromPsi, option.positions[0]?.tip.pattern),
         option.dropletRange
           ? el('div', {
               class: 'muted',
@@ -627,7 +634,7 @@ function renderAirblastResult(option, index, output) {
             el('th', { text: 'Tip' }),
             el('th', { text: 'GPM' }),
             el('th', { text: 'oz/min' }),
-            el('th', { text: 'Droplet' }),
+            option.positions.some((position) => position.dropletClass) ? el('th', { text: 'Droplet' }) : null,
           ),
         ),
         el(
@@ -649,7 +656,7 @@ function renderAirblastResult(option, index, output) {
               el('td', { text: position.tip.partNo }),
               el('td', { text: fmtFixed(position.gpm, 3) }),
               el('td', { text: fmt(position.ozPerMin) }),
-              el('td', { text: position.dropletClass }),
+              position.dropletClass ? el('td', { text: position.dropletClass }) : null,
             ),
           ),
         ),
@@ -657,7 +664,7 @@ function renderAirblastResult(option, index, output) {
     ),
     el('p', {
       class: 'muted',
-      text: 'Positions run from the bottom of the canopy up. Fit these tips on each side of the machine.',
+      text: 'Positions run from the bottom of the canopy up. Fit these on each side of the machine. A D3 45 is a number 3 disc on a 45 core.',
     }),
 
     el('p', { class: 'result-note', text: option.positions[0].tip.summary }),
@@ -1153,7 +1160,9 @@ function renderAccountPanel(mode = 'signin') {
         class: 'muted',
         text: store.CLOUD_ENABLED
           ? `Signed in as ${session.email}. Your spray records sync to this account.`
-          : 'Your spray records are saved in this browser on this device.',
+          : session.email
+            ? `Signed in as ${session.email}. Your spray records are saved in this browser on this device.`
+            : 'Your spray records are saved in this browser on this device.',
       }),
       store.CLOUD_ENABLED && store.outboxCount()
         ? el('p', { class: 'muted', text: `${store.outboxCount()} record(s) waiting to upload.` })
@@ -1213,63 +1222,71 @@ function renderAccountPanel(mode = 'signin') {
     el('p', {
       class: 'muted',
       text: store.CLOUD_ENABLED
-        ? 'Sign in and your spray log follows you to any phone or computer.'
-        : 'Accounts keep separate spray logs for each operator on this device. Nothing is uploaded anywhere.',
+        ? 'Sign in and your spray log follows you to any phone or computer. The email is required so a forgotten password can be reset.'
+        : 'Accounts keep separate spray logs for each operator on this device. Email is required so a forgotten password can be reset if you later turn on cloud accounts.',
     }),
     tabs,
-    mode === 'signin' ? signInForm() : signUpForm(),
+    mode === 'signup' ? signUpForm() : mode === 'reset' ? resetForm() : signInForm(),
   );
 }
 
 function signInForm() {
   const messageNode = el('p', { class: 'form-message' });
+  const legacy = store.CLOUD_ENABLED ? [] : store.listLocalAccounts().filter((account) => !account.email);
 
-  if (store.CLOUD_ENABLED) {
-    return el(
-      'form',
-      {
-        onSubmit: async (event) => {
-          event.preventDefault();
-          const data = Object.fromEntries(new FormData(event.target).entries());
-          try {
-            await store.signIn({ email: data.email, password: data.password });
-            renderAccountButton();
-            $('#account-dialog').close();
-            await refreshRecords();
-          } catch (error) {
-            message(messageNode, error.message, true);
-          }
-        },
+  const form = el(
+    'form',
+    {
+      onSubmit: async (event) => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(event.target).entries());
+        try {
+          await store.signIn({ email: data.email, password: data.password });
+          renderAccountButton();
+          $('#account-dialog').close();
+          await refreshRecords();
+        } catch (error) {
+          message(messageNode, error.message, true);
+        }
       },
-      el(
-        'label',
-        { class: 'field' },
-        el('span', { class: 'field-label', text: 'Email' }),
-        el('input', { type: 'email', name: 'email', required: true, autocomplete: 'email' }),
-      ),
-      el(
-        'label',
-        { class: 'field', style: 'margin-top:.7rem' },
-        el('span', { class: 'field-label', text: 'Password' }),
-        el('input', { type: 'password', name: 'password', required: true, autocomplete: 'current-password' }),
-      ),
-      messageNode,
-      el('div', { class: 'form-actions' }, el('button', { type: 'submit', class: 'primary', text: 'Sign in' })),
-    );
-  }
+    },
+    el(
+      'label',
+      { class: 'field' },
+      el('span', { class: 'field-label', text: 'Email' }),
+      el('input', { type: 'email', name: 'email', required: true, autocomplete: 'email' }),
+    ),
+    el(
+      'label',
+      { class: 'field', style: 'margin-top:.7rem' },
+      el('span', { class: 'field-label', text: 'Password' }),
+      el('input', { type: 'password', name: 'password', required: true, autocomplete: 'current-password' }),
+    ),
+    messageNode,
+    el(
+      'div',
+      { class: 'form-actions' },
+      el('button', { type: 'submit', class: 'primary', text: 'Sign in' }),
+      el('button', {
+        type: 'button',
+        class: 'ghost',
+        text: 'Forgot password',
+        onClick: () => renderAccountPanel('reset'),
+      }),
+    ),
+  );
 
-  const accounts = store.listLocalAccounts();
-  if (!accounts.length) {
-    return el('p', { class: 'muted', text: 'No accounts on this device yet. Use the New account tab to make one.' });
-  }
+  if (!legacy.length) return form;
 
   return el(
     'div',
     {},
+    form,
+    el('p', { class: 'muted', style: 'margin-top:1rem', text: 'Older accounts on this device that were made before email was required:' }),
     el(
       'div',
       { class: 'account-list' },
-      ...accounts.map((account) =>
+      ...legacy.map((account) =>
         el(
           'form',
           {
@@ -1294,8 +1311,49 @@ function signInForm() {
         ),
       ),
     ),
+  );
+}
+
+function resetForm() {
+  const messageNode = el('p', { class: 'form-message' });
+  return el(
+    'form',
+    {
+      onSubmit: async (event) => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(event.target).entries());
+        try {
+          await store.requestPasswordReset(data.email);
+          message(messageNode, 'If that email has an account, a reset link is on its way. Check the inbox and junk.');
+        } catch (error) {
+          message(messageNode, error.message, true);
+        }
+      },
+    },
+    el('p', {
+      class: 'muted',
+      text: store.CLOUD_ENABLED
+        ? 'Enter the email the account was created with. A reset link will be sent there.'
+        : 'Password reset emails need cloud accounts. Without that, delete the account on this device and make a new one.',
+    }),
+    el(
+      'label',
+      { class: 'field', style: 'margin-top:.7rem' },
+      el('span', { class: 'field-label', text: 'Email' }),
+      el('input', { type: 'email', name: 'email', required: true, autocomplete: 'email' }),
+    ),
     messageNode,
-    el('p', { class: 'muted', text: 'Leave the PIN blank if the account was made without one.' }),
+    el(
+      'div',
+      { class: 'form-actions' },
+      el('button', { type: 'submit', class: 'primary', text: 'Send reset email' }),
+      el('button', {
+        type: 'button',
+        class: 'ghost',
+        text: 'Back to sign in',
+        onClick: () => renderAccountPanel('signin'),
+      }),
+    ),
   );
 }
 
@@ -1322,58 +1380,41 @@ function signUpForm() {
         }
       },
     },
-    store.CLOUD_ENABLED
-      ? el(
-          'div',
-          {},
-          el(
-            'label',
-            { class: 'field' },
-            el('span', { class: 'field-label', text: 'Your name' }),
-            el('input', { type: 'text', name: 'name', autocomplete: 'name' }),
-          ),
-          el(
-            'label',
-            { class: 'field', style: 'margin-top:.7rem' },
-            el('span', { class: 'field-label', text: 'Email' }),
-            el('input', { type: 'email', name: 'email', required: true, autocomplete: 'email' }),
-          ),
-          el(
-            'label',
-            { class: 'field', style: 'margin-top:.7rem' },
-            el('span', { class: 'field-label', text: 'Password' }),
-            el('input', {
-              type: 'password',
-              name: 'password',
-              required: true,
-              minLength: 8,
-              autocomplete: 'new-password',
-            }),
-            el('span', { class: 'field-hint', text: 'At least 8 characters.' }),
-          ),
-        )
-      : el(
-          'div',
-          {},
-          el(
-            'label',
-            { class: 'field' },
-            el('span', { class: 'field-label', text: 'Name' }),
-            el('input', { type: 'text', name: 'name', required: true, placeholder: 'Dad, hired man, sprayer 2' }),
-          ),
-          el(
-            'label',
-            { class: 'field', style: 'margin-top:.7rem' },
-            el('span', { class: 'field-label', text: 'PIN' }),
-            el('input', { type: 'password', name: 'pin', inputmode: 'numeric', placeholder: 'optional' }),
-            el('span', {
-              class: 'field-hint',
-              text: store.hasStrongHashing()
-                ? 'Optional. It keeps other operators out of your log on a shared tablet, but anyone with this device could still read the browser storage, so do not reuse a PIN that matters.'
-                : 'This page is not being served over https, so the PIN is only lightly scrambled. Treat it as a name tag, not a lock.',
-            }),
-          ),
-        ),
+    el(
+      'label',
+      { class: 'field' },
+      el('span', { class: 'field-label', text: 'Your name' }),
+      el('input', {
+        type: 'text',
+        name: 'name',
+        required: true,
+        autocomplete: 'name',
+        placeholder: store.CLOUD_ENABLED ? '' : 'Dad, hired man, sprayer 2',
+      }),
+    ),
+    el(
+      'label',
+      { class: 'field', style: 'margin-top:.7rem' },
+      el('span', { class: 'field-label', text: 'Email' }),
+      el('input', { type: 'email', name: 'email', required: true, autocomplete: 'email' }),
+      el('span', {
+        class: 'field-hint',
+        text: 'Required. Password resets are sent here.',
+      }),
+    ),
+    el(
+      'label',
+      { class: 'field', style: 'margin-top:.7rem' },
+      el('span', { class: 'field-label', text: 'Password' }),
+      el('input', {
+        type: 'password',
+        name: 'password',
+        required: true,
+        minLength: 8,
+        autocomplete: 'new-password',
+      }),
+      el('span', { class: 'field-hint', text: 'At least 8 characters.' }),
+    ),
     messageNode,
     el(
       'div',
@@ -1435,9 +1476,6 @@ function renderCatalogPicker() {
     ...seriesIds.map((seriesId) =>
       el('option', { value: seriesId, text: `${SERIES[seriesId].name} (${SERIES[seriesId].psiMin}-${SERIES[seriesId].psiMax} PSI)` }),
     ),
-    ...DISC_CORE_SETS.map((set) =>
-      el('option', { value: `disc:${set.id}`, text: `${set.name} (${set.psiMin}-${set.psiMax} PSI)` }),
-    ),
   );
   select.addEventListener('change', renderCatalog);
   renderCatalog();
@@ -1463,23 +1501,6 @@ function catalogTable({ heads, rows, note }) {
 
 function renderCatalog() {
   const value = $('#catalog-series').value;
-
-  if (value.startsWith('disc:')) {
-    const set = DISC_CORE_SETS.find((item) => item.id === value.slice(5));
-    if (!set) return;
-    $('#catalog-output').replaceChildren(
-      ...catalogTable({
-        heads: ['Disc and core', ...set.psiSteps.map((psi) => `${psi}`)],
-        rows: set.rows.map(([partNo, flows]) => [
-          partNo,
-          ...flows.map((gpm) => (gpm === null ? '-' : fmtFixed(gpm, 3))),
-        ]),
-        note: `${set.note} Columns are PSI and cells are GPM per nozzle, straight from the catalog. A dash means TeeJet does not tabulate that combination at that pressure. These are the nozzles to look at when an air blast machine needs more volume than the moulded cone tips can pass, but TeeJet publishes no droplet classification for them, so the calculator will not recommend one.`,
-      }),
-    );
-    return;
-  }
-
   const tips = TIPS.filter((tip) => tip.seriesId === value);
   if (!tips.length) return;
   const series = SERIES[value];
@@ -1491,6 +1512,24 @@ function renderCatalog() {
         heads: ['Part number', ...series.flowSteps.map((psi) => `${psi}`)],
         rows: tips.map((tip) => [tip.partNo, ...tip.flowTable.gpm.map((gpm) => fmtFixed(gpm, 2))]),
         note: `Columns are PSI and cells are GPM per tip, as published. ${series.streams} solid streams per tip, so there is no droplet class: the liquid lands in bands and drift is close to nil.`,
+      }),
+    );
+    return;
+  }
+
+  if (series.pattern === 'disc-core') {
+    const set = DISC_CORE_SETS.find((item) => item.id === value);
+    $('#catalog-output').replaceChildren(
+      ...catalogTable({
+        heads: ['Disc and core', ...set.psiSteps.map((psi) => `${psi}`)],
+        rows: set.rows.map(([partNo, flows]) => {
+          const tip = tips.find((item) => item.catalogPart === partNo);
+          return [
+            tip?.partNo || partNo,
+            ...flows.map((gpm) => (gpm === null ? '-' : fmtFixed(gpm, 3))),
+          ];
+        }),
+        note: `${set.note} A D3 45 is a number 3 disc on a 45 core, the combination a Rears Powerblast typically runs. Columns are PSI and cells are GPM per nozzle. A dash means TeeJet does not tabulate that combination at that pressure. TeeJet publishes no droplet class for these.`,
       }),
     );
     return;
@@ -1543,12 +1582,9 @@ const URL_FIELDS = [
   ['gpa', '#gpa'],
   ['mph', '#mph'],
   ['spacing', '#spacing'],
-  ['tips', '#tips-per-row'],
   ['row', '#row-spacing'],
   ['pos', '#positions'],
-  ['top', '#top-share'],
   ['wind', '#wind'],
-  ['lb', '#solution-weight'],
   ['psimin', '#psi-min'],
   ['psimax', '#psi-max'],
 ];
@@ -1608,11 +1644,9 @@ function saveSprayerProfile() {
   const profile = {
     sprayerType: state.sprayerType,
     spacing: $('#spacing').value,
-    tipsPerRow: $('#tips-per-row').value,
     rowSpacing: $('#row-spacing').value,
     sides: $('#sides').value,
     positions: $('#positions').value,
-    topShare: $('#top-share').value,
     psiMin: $('#psi-min').value,
     psiMax: $('#psi-max').value,
     mph: $('#mph').value,
@@ -1634,11 +1668,9 @@ function applyProfileValues(profile) {
     if (value !== undefined && value !== null && value !== '') $(selector).value = value;
   };
   assign('#spacing', profile.spacing);
-  assign('#tips-per-row', profile.tipsPerRow);
   assign('#row-spacing', profile.rowSpacing);
   assign('#sides', profile.sides);
   assign('#positions', profile.positions);
-  assign('#top-share', profile.topShare);
   assign('#psi-min', profile.psiMin);
   assign('#psi-max', profile.psiMax);
   assign('#mph', profile.mph);

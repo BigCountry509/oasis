@@ -25,7 +25,7 @@ export const SPRAYER_TYPES = {
   airblast: {
     id: 'airblast',
     name: 'Air blast sprayer',
-    description: 'Orchard, vineyard or specialty crop air blast with nozzles on manifolds each side.',
+    description: 'Rears Powerblast and other orchard air blast machines with disc-core nozzles on a manifold each side.',
   },
 };
 
@@ -239,11 +239,12 @@ export const APPLICATIONS = [
     gpaDefault: 100,
     gpaMin: 30,
     gpaTypical: [50, 150],
-    preferSeries: ['txa'],
+    patterns: ['disc-core', 'cone'],
+    preferSeries: ['dc45', 'dc25', 'txa'],
     guidance: [
+      'A Rears Powerblast and most orchard air blast machines run TeeJet disc and core nozzles. People call them by the pair: a D3 45 is a number 3 disc on a 45 core.',
       'Match the air volume to the canopy first. Nozzles only meter the liquid, the fan is what moves it.',
       'Shut off the tips that are spraying over the top or under the tree. Empty air is wasted spray.',
-      'Set roughly two thirds to three quarters of the total output on the top half of the canopy, since that is where most of the leaf area sits.',
     ],
   },
   {
@@ -258,7 +259,8 @@ export const APPLICATIONS = [
     gpaDefault: 100,
     gpaMin: 30,
     gpaTypical: [50, 150],
-    preferSeries: ['txa'],
+    patterns: ['disc-core', 'cone'],
+    preferSeries: ['dc45', 'dc25', 'txa'],
     guidance: [
       'Slow down before you add pressure. Ground speed has more effect on canopy penetration than nozzle pressure does.',
       'Spray in the calm of early morning or evening. Air blast puts spray up where the wind can take it.',
@@ -276,6 +278,7 @@ export const APPLICATIONS = [
     gpaDefault: 100,
     gpaMin: 40,
     gpaTypical: [60, 150],
+    patterns: ['cone'],
     preferSeries: ['aitxa'],
     guidance: [
       'Air induction cone tips need at least 60 PSI before the venturi works properly.',
@@ -294,7 +297,8 @@ export const APPLICATIONS = [
     gpaDefault: 150,
     gpaMin: 50,
     gpaTypical: [100, 250],
-    preferSeries: ['txa', 'aitxa'],
+    patterns: ['disc-core', 'cone'],
+    preferSeries: ['dc45', 'dc56', 'txa'],
     guidance: [
       'Dormant applications are about wetting every surface, so volume is the priority.',
       'Oils and foliar feeds are abrasive or corrosive. Ceramic orifices are worth the money here.',

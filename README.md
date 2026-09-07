@@ -25,9 +25,11 @@ rate it will actually deliver, and the droplet class, plus a rate table for that
 pressures and speeds.
 
 **Air blast is calculated differently**, because it is a different machine. Flow comes from row
-spacing in feet rather than tip spacing in inches, it is split between the two manifolds, and it is
-then graded across the nozzle positions so about seventy per cent of the volume goes into the top
-half of the canopy. You get a tip for each position rather than one tip for the whole machine.
+spacing in feet rather than tip spacing in inches, it is split between the two manifolds, and about
+seventy per cent of the volume is put on the top half of the canopy. You get a nozzle for each
+position rather than one tip for the whole machine. Orchard machines like a Rears Powerblast are
+answered with disc-core nozzles named the way they are ordered: a D3 45 is a number 3 disc on a 45
+core.
 
 **Spray log.** Save any recommendation as a record: name, date, field, acres, crop, the nozzles and
 pressure you ran, products with EPA registration numbers and rates, wind, temperature, humidity,
@@ -74,10 +76,13 @@ python3 -m http.server 8080
 ## Accounts and where your records go
 
 Out of the box, accounts and spray records are stored **in the browser on the device you are using**.
-Nothing is uploaded and there is nothing to sign up for. Multiple accounts on one device keep
-separate logs, which is useful for a shared cab tablet. The optional PIN is a divider between
-operators, not real security: anyone with the device can read browser storage. Export a CSV
-occasionally so you have a copy.
+Nothing is uploaded. Creating an account requires a name, an email and a password of at least eight
+characters. The email is required so a forgotten password can be reset. Multiple accounts on one
+device keep separate logs, which is useful for a shared cab tablet. Export a CSV occasionally so
+you have a copy.
+
+Password reset emails only go out once cloud accounts are turned on below. Until then, delete the
+account on the device and make a new one.
 
 ### Turning on real accounts
 
@@ -102,6 +107,10 @@ the office computer.
 The anon key is designed to be public and is safe to commit; row level security is what protects the
 data. If you would rather not have people signing themselves up, turn off public signups under
 **Authentication > Providers** in Supabase and create the accounts yourself.
+
+Enable the email provider and confirm that **password reset** is on. The site's Forgot password
+button calls Supabase's recover endpoint and sends the reset link to the email the account was
+created with.
 
 Records saved while out of signal are held on the device and pushed up the next time the app loads
 with a connection.
@@ -165,7 +174,8 @@ Tip families included:
 - **Flooding:** TF Turbo FloodJet and TK FloodJet
 - **Fertilizer streamer bars:** StreamJet SJ3 (three streams) and SJ7A (seven streams)
 - **Air blast and directed cones:** TXA/TXB ConeJet, AITXA/AITXB air induction ConeJet
-- **Air blast disc and core:** D disc with DC25, DC45 and DC56 cores, as a lookup table only
+- **Air blast disc and core:** D disc with DC25, DC45 and DC56 cores, named the way they are ordered
+  in the shop (a D3 disc on a 45 core is a **D3 45**). These are the nozzles a Rears Powerblast runs.
 
 Droplet classifications are published at set pressures and against a specific standard, and TeeJet
 revises them. The tool tells you when the droplet class it shows came from the nearest charted
@@ -185,10 +195,11 @@ can cite.
   classify. They are offered for fertilizer jobs only and never for anything that has to hit a leaf.
   Their published capacities also do not follow the square root law, so the printed table is stored
   and read directly instead of being derived from the 40 PSI figure.
-- **Disc and core assemblies carry no published droplet classification at all.** They are the
-  nozzles to reach for when an air blast machine needs more volume than the moulded cone tips can
-  pass, so their capacity tables are in the tip catalog under Tools, but the calculator will not
-  recommend one, because doing so would mean inventing a droplet class for it.
+- **Disc and core assemblies have no published droplet class**, so the pick is on flow rather than
+  spectrum. They are the standard Rears Powerblast nozzle. People call them by the pair: a D3 45 is
+  a number 3 disc on a 45 core. Their published capacities are stored as a table, the same way the
+  streamer bars are, because a dash in TeeJet's chart means that disc and core are not rated at that
+  pressure.
 
 ## Adding or changing tips
 
@@ -199,8 +210,9 @@ pressure range and add its column to the droplet grid.
 
 Families charted at their own pressures or with their own capacity numbers, such as DG and the
 Turbo FloodJet, go in `FAN_SERIES_META` with their own droplet table. Streamer bars go in
-`STREAM_SERIES_META` with their published flow table. Disc and core capacities are reference data in
-`DISC_CORE_SETS`, which is deliberately not part of the tip list the calculator searches.
+`STREAM_SERIES_META` with their published flow table. Disc and core capacities live in
+`DISC_CORE_SETS` and are built into the tip list the calculator searches, named as D3 45 rather
+than D3-DC45.
 
 Job presets, their target droplet ranges and their guidance text live in
 [`js/data/applications.js`](js/data/applications.js).

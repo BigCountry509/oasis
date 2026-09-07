@@ -97,15 +97,6 @@
                   <span class="field-hint" id="spacing-hint">15 and 20 inch are the common boom spacings.</span>
                 </label>
 
-                <label class="field boom-only">
-                  <span class="field-label">Tips per row</span>
-                  <span class="input-wrap">
-                    <input type="number" id="tips-per-row" name="tipsPerRow" min="1" max="6" step="1" value="1" inputmode="numeric" />
-                    <span class="unit">tips</span>
-                  </span>
-                  <span class="field-hint">Leave at 1 for a normal broadcast boom. Raise it for directed row applications with more than one tip per row.</span>
-                </label>
-
                 <!-- airblast only -->
                 <label class="field airblast-only" hidden>
                   <span class="field-label">Row spacing</span>
@@ -122,55 +113,16 @@
                     <option value="both">Both sides in one pass (drive every row middle)</option>
                     <option value="one">One side per pass (drive both middles)</option>
                   </select>
-                  <span class="field-hint">This picks the 495 or 990 calibration constant.</span>
+                  <span class="field-hint">Most orchard passes spray both sides at once.</span>
                 </label>
 
                 <label class="field airblast-only" hidden>
                   <span class="field-label">Nozzle positions per side</span>
                   <span class="input-wrap">
-                    <input type="number" id="positions" name="positionsPerSide" min="1" max="12" step="1" value="5" inputmode="numeric" />
+                    <input type="number" id="positions" name="positionsPerSide" min="1" max="14" step="1" value="8" inputmode="numeric" />
                     <span class="unit">each</span>
                   </span>
-                  <span class="field-hint">Count only the positions actually spraying the canopy.</span>
-                </label>
-
-                <label class="field airblast-only" hidden>
-                  <span class="field-label">Volume on the top half</span>
-                  <span class="input-wrap">
-                    <input type="number" id="top-share" name="topShare" min="40" max="90" step="5" value="70" inputmode="numeric" />
-                    <span class="unit">%</span>
-                  </span>
-                  <span class="field-hint">Orchard practice is 65 to 75 per cent into the top half of the canopy.</span>
-                </label>
-
-                <label class="field" id="solution-field" hidden>
-                  <span class="field-label">Solution weight</span>
-                  <span class="input-wrap">
-                    <input
-                      type="number"
-                      id="solution-weight"
-                      name="solutionLbPerGal"
-                      min="7"
-                      max="15"
-                      step="0.01"
-                      value="8.34"
-                      list="solution-weights"
-                      inputmode="decimal"
-                    />
-                    <span class="unit">lb/gal</span>
-                  </span>
-                  <datalist id="solution-weights">
-                    <option value="8.34" label="Water"></option>
-                    <option value="10.66" label="28% UAN"></option>
-                    <option value="11.06" label="32% UAN"></option>
-                    <option value="11.65" label="10-34-0"></option>
-                    <option value="11.1" label="12-0-0-26 ATS"></option>
-                  </datalist>
-                  <span class="field-hint">
-                    Water is 8.34. 28% UAN is 10.66, 32% UAN is 11.06, 10-34-0 is 11.65, ATS is about 11.1.
-                    Tip charts are printed for water, and a heavier solution flows slower through the same
-                    tip, so the pressure has to be worked out for the weight you are actually putting on.
-                  </span>
+                  <span class="field-hint">A Rears Powerblast commonly has 8 to 12 a side. Count only the ones that hit the tree.</span>
                 </label>
 
                 <label class="field">
@@ -328,7 +280,7 @@
           <p class="muted">
             Every tip the calculator knows about, with its rating, its usable pressure range and the
             published droplet class at each charted pressure. Handy when you are deciding what to keep on
-            the shelf. The streamer bars and the disc-core assemblies have no droplet classification
+            the shelf. Streamer bars and disc-core nozzles (D3 45 and the rest) have no droplet class
             published, so those are listed by flow instead.
           </p>
           <label class="field">
@@ -363,17 +315,10 @@
                 small trims and a tip change is for real changes.
               </p>
               <p class="muted">
-                Streamer bars are the exception. TeeJet's printed capacities for them do not follow the square
-                root law, so those are read straight off the published table instead.
-              </p>
-            </div>
-            <div>
-              <h4>Heavy solutions</h4>
-              <p class="formula">Water equivalent flow = flow you want &times; &radic;(lb per gallon &divide; 8.34)</p>
-              <p class="muted">
-                Flow through an orifice drops with the square root of the liquid's weight, so 28% UAN comes
-                out about 13 per cent slower than water through the same tip at the same pressure. Enter the
-                solution weight on a fertilizer job and the pressure comes back corrected for it.
+                Streamer bars and disc-core orchard nozzles are the exception. TeeJet's printed capacities
+                for them do not follow the square root law closely enough, so those are read straight off
+                the published table instead. A D3 45 is a number 3 disc on a 45 core, the combination a
+                Rears Powerblast typically runs.
               </p>
             </div>
           </div>

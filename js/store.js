@@ -3,11 +3,10 @@
  *
  * There are two interchangeable backends behind one interface:
  *
- *   local  - the default. Accounts and records live in this browser. No signup,
- *            no internet, nothing leaves the device. A PIN keeps two operators
- *            sharing a cab tablet out of each other's logs, but it is a
- *            convenience divider, not real security, because anyone with the
- *            device can read the browser storage.
+ *   local  - the default. Accounts and records live in this browser. Creating
+ *            an account needs a name, an email and a password. The email is
+ *            required so a forgotten password can be reset once cloud accounts
+ *            are turned on. No internet, nothing leaves the device.
  *
  *   cloud  - switched on by filling in js/config.js with a Supabase project.
  *            Real email and password accounts, records stored server side with
@@ -227,29 +226,55 @@ async function withAuth(request) {
 /* ---------- accounts ---------- */
 
 export function listLocalAccounts() {
-  return readJson(KEYS.accounts, []).map(({ id, name, createdAt }) => ({ id, name, createdAt }));
+  return readJson(KEYS.accounts, []).map(({ id, name, email, createdAt }) => ({
+    id,
+    name,
+    email,
+    createdAt,
+  }));
+}
+
+function normalizeEmail(email) {
+  const trimmed = String(email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    throw new Error('Enter a working email. Password resets are sent there.');
+  }
+  return trimmed;
 }
 
 export async function signUp({ name, email, password, pin }) {
-  if (CLOUD_ENABLED) return cloudSignUp({ email, password, name });
+  const trimmedName = (name || '').trim();
+  const normalizedEmail = normalizeEmail(email);
+  const secret = (password || pin || '').trim();
+  if (secret.length < 8) throw new Error('Password needs at least 8 characters.');
 
+  if (CLOUD_ENABLED) return cloudSignUp({ email: normalizedEmail, password: secret, name: trimmedName });
+
+  if (!trimmedName) throw new Error('Give the account a name.');
   const accounts = readJson(KEYS.accounts, []);
-  const trimmed = (name || '').trim();
-  if (!trimmed) throw new Error('Give the account a name.');
-  if (accounts.some((account) => account.name.toLowerCase() === trimmed.toLowerCase())) {
-    throw new Error(`There is already an account called ${trimmed} on this device.`);
+  if (accounts.some((account) => account.name.toLowerCase() === trimmedName.toLowerCase())) {
+    throw new Error(`There is already an account called ${trimmedName} on this device.`);
+  }
+  if (accounts.some((account) => account.email && account.email === normalizedEmail)) {
+    throw new Error('That email already has an account on this device.');
   }
   const salt = randomSalt();
   const account = {
     id: newId(),
-    name: trimmed,
+    name: trimmedName,
+    email: normalizedEmail,
     salt,
-    hash: pin ? await hashPin(pin, salt) : null,
+    hash: await hashPin(secret, salt),
     createdAt: new Date().toISOString(),
   };
   accounts.push(account);
   writeJson(KEYS.accounts, accounts);
-  setSession({ mode: 'local', accountId: account.id, name: account.name });
+  setSession({
+    mode: 'local',
+    accountId: account.id,
+    name: account.name,
+    email: account.email,
+  });
 
   /*
    * Anything logged before there were accounts sits in the device drawer. The
@@ -271,14 +296,37 @@ export async function signIn({ accountId, email, password, pin }) {
   if (CLOUD_ENABLED) return cloudSignIn({ email, password });
 
   const accounts = readJson(KEYS.accounts, []);
-  const account = accounts.find((item) => item.id === accountId);
-  if (!account) throw new Error('That account is not on this device.');
+  const secret = password || pin || '';
+  const account = accountId
+    ? accounts.find((item) => item.id === accountId)
+    : accounts.find((item) => item.email && item.email === String(email || '').trim().toLowerCase());
+  if (!account) throw new Error('No account with that email on this device.');
   if (account.hash) {
-    const attempt = await hashPin(pin || '', account.salt);
-    if (attempt !== account.hash) throw new Error('That PIN does not match.');
+    const attempt = await hashPin(secret, account.salt);
+    if (attempt !== account.hash) throw new Error('That password does not match.');
   }
-  setSession({ mode: 'local', accountId: account.id, name: account.name });
+  setSession({
+    mode: 'local',
+    accountId: account.id,
+    name: account.name,
+    email: account.email || null,
+  });
   return session;
+}
+
+export async function requestPasswordReset(email) {
+  const normalized = normalizeEmail(email);
+  if (CLOUD_ENABLED) {
+    await supabase('/auth/v1/recover', {
+      method: 'POST',
+      auth: false,
+      body: { email: normalized },
+    });
+    return { sent: true };
+  }
+  throw new Error(
+    'Password reset emails need cloud accounts turned on. Until then, delete the account on this device and make a new one.',
+  );
 }
 
 export async function signOut() {

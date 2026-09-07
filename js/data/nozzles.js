@@ -682,9 +682,11 @@ function buildConeTips() {
  * orchard nozzles: an orifice disc and a swirl core in one body, in far larger
  * capacities than the moulded cone tips, and rated to 300 PSI.
  *
- * TeeJet publishes no droplet classification for them, so they are held apart
- * from the tips the calculator recommends and offered as a lookup table instead.
- * Guessing a droplet class for them would be inventing data.
+ * A Rears Powerblast and most other orchard air blast machines run these. The
+ * combination people name in the shop is the disc number and the core number,
+ * so a D3 disc with a DC45 core is called a D3 45. TeeJet publishes no droplet
+ * classification for them; the calculator still recommends them on flow, and
+ * says so, rather than inventing a class.
  */
 const DISC_CORE_PSI_STEPS = [10, 20, 30, 40, 60, 80, 100, 150, 200, 300];
 
@@ -757,11 +759,91 @@ export const DISC_CORE_SETS = [
   },
 ];
 
+const DISC_CORE_SERIES = {
+  dc25: {
+    name: 'Disc-core 25',
+    pattern: 'disc-core',
+    psiMin: 10,
+    psiMax: 300,
+    driftClass: 'none',
+    summary:
+      'Hollow cone disc and core. A smaller core than the 45, so less flow from the same disc. Used when a Rears-style manifold needs a finer output on the lower positions.',
+  },
+  dc45: {
+    name: 'Disc-core 45 (Rears)',
+    pattern: 'disc-core',
+    psiMin: 10,
+    psiMax: 300,
+    driftClass: 'none',
+    summary:
+      'The standard Rears Powerblast nozzle: a TeeJet D disc with a 45 core. People call them by the pair, so a D3 45 is a number 3 disc on a 45 core. Ceramic lasts on wettable powders. TeeJet publishes no droplet class for these, so the pick is on flow.',
+  },
+  dc56: {
+    name: 'Disc-core 56',
+    pattern: 'disc-core',
+    psiMin: 10,
+    psiMax: 300,
+    driftClass: 'none',
+    summary:
+      'Full cone disc and core, the largest capacities TeeJet lists. For high volume dormant and foliar jobs that a 45 core cannot carry.',
+  },
+};
+
+function farmerDiscName(catalogPart) {
+  const match = catalogPart.match(/^D([0-9.]+)-DC(\d+)$/);
+  return match ? `D${match[1]} ${match[2]}` : catalogPart;
+}
+
+function buildDiscCoreTips() {
+  const tips = [];
+  for (const set of DISC_CORE_SETS) {
+    const meta = DISC_CORE_SERIES[set.id];
+    const core = set.id.replace('dc', '');
+    for (const [catalogPart, flows] of set.rows) {
+      const psi = [];
+      const gpm = [];
+      set.psiSteps.forEach((step, index) => {
+        if (flows[index] != null) {
+          psi.push(step);
+          gpm.push(flows[index]);
+        }
+      });
+      const disc = catalogPart.match(/^D([0-9.]+)/)?.[1] || catalogPart;
+      const at40 = set.psiSteps.indexOf(40);
+      tips.push({
+        id: `${set.id}-${disc}`,
+        seriesId: set.id,
+        seriesName: meta.name,
+        sprayerType: 'airblast',
+        pattern: 'disc-core',
+        size: disc,
+        core,
+        gpm40: flows[at40],
+        flowTable: { psi, gpm },
+        partNo: farmerDiscName(catalogPart),
+        catalogPart,
+        psiMin: psi[0],
+        psiMax: psi[psi.length - 1],
+        driftClass: meta.driftClass,
+        twinFan: false,
+        airInduction: false,
+        preOrifice: false,
+        sprayAngle: set.pattern,
+        summary: meta.summary,
+        droplets: {},
+        dropletPsiSteps: [],
+      });
+    }
+  }
+  return tips;
+}
+
 export const TIPS = [
   ...buildBoomTips(),
   ...buildFanSeriesTips(),
   ...buildStreamTips(),
   ...buildConeTips(),
+  ...buildDiscCoreTips(),
 ];
 
 export const SERIES = {
@@ -769,6 +851,7 @@ export const SERIES = {
   ...FAN_SERIES_META,
   ...STREAM_SERIES_META,
   ...CONE_SERIES_META,
+  ...DISC_CORE_SERIES,
 };
 
 /* Flow in GPM at any pressure. Flow varies with the square root of pressure. */

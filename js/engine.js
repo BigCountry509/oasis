@@ -127,10 +127,21 @@ function patternAllowed(tip, application) {
   return (application.patterns || DEFAULT_PATTERNS).includes(tip.pattern);
 }
 
-/* Solid streams have no droplet spectrum to classify or to score. */
+/* Solid streams have no droplet spectrum; they still score as a perfect fit on
+ * the fertilizer jobs they were built for. Disc-core assemblies also have no
+ * published class, but they are scored as unclassified so a moulded cone tip
+ * with a real droplet match can still win on a drift-sensitive pass. */
 const STREAM_FIT = { fit: 'ideal', score: 55, stepsOff: 0 };
+const UNCLASSIFIED_FIT = { fit: 'unclassified', score: 50, stepsOff: 0 };
 
-function dropletFit(droplet, application) {
+function dropletFit(droplet, application, pattern) {
+  if (!droplet) {
+    if (pattern === 'stream') return STREAM_FIT;
+    if (pattern === 'disc-core' && (application.patterns || []).includes('disc-core')) {
+      return STREAM_FIT;
+    }
+    return UNCLASSIFIED_FIT;
+  }
   const index = dropletIndex(droplet);
   const idealLow = dropletIndex(application.idealMin);
   const idealHigh = dropletIndex(application.idealMax);
@@ -341,7 +352,7 @@ export function recommendBoom(input) {
     const droplet = isStream ? { droplet: null, fromPsi: null, exact: true } : dropletAtPsi(tip, psi);
     if (!isStream && !droplet.droplet) continue;
 
-    const fit = isStream ? STREAM_FIT : dropletFit(droplet.droplet, application);
+    const fit = dropletFit(droplet.droplet, application, tip.pattern);
     const pressurePoints = pressureScore(tip, psi);
     const driftPoints = driftScore(tip, input.windMph);
     const seriesPoints = seriesScore(tip, application);
@@ -556,7 +567,7 @@ export function recommendAirblast(input) {
   if (!application) throw new Error(`Unknown application: ${input.applicationId}`);
 
   const sides = input.sides || 'both';
-  const positions = input.positionsPerSide || 5;
+  const positions = input.positionsPerSide || 8;
   const topShare = Number.isFinite(input.topShare) ? input.topShare : 0.7;
 
   const totalGpm = airblastTotalFlow({
@@ -571,9 +582,13 @@ export function recommendAirblast(input) {
   const weights = canopyWeights(positions, topShare);
   const positionTargets = weights.map((weight) => weight * perSideGpm);
 
-  const seriesIds = input.seriesFilter?.length
+  const seriesIds = (input.seriesFilter?.length
     ? input.seriesFilter
-    : [...new Set(TIPS.filter((tip) => tip.sprayerType === 'airblast').map((tip) => tip.seriesId))];
+    : [...new Set(TIPS.filter((tip) => tip.sprayerType === 'airblast').map((tip) => tip.seriesId))]
+  ).filter((seriesId) => {
+    const sample = TIPS.find((tip) => tip.seriesId === seriesId);
+    return sample && patternAllowed(sample, application);
+  });
 
   const options = [];
   for (const seriesId of seriesIds) {
@@ -624,7 +639,9 @@ export function recommendAirblast(input) {
         };
       });
 
-      const fits = positions.map((position) => dropletFit(position.dropletClass, application));
+      const fits = positions.map((position) =>
+        dropletFit(position.dropletClass, application, position.tip.pattern),
+      );
       const fit = {
         fit: fits.every((item) => item.fit === 'ideal')
           ? 'ideal'
@@ -723,7 +740,7 @@ export function recommendAirblast(input) {
     allConsidered: options.length,
     onRateCount: onRate.length,
     unreachable,
-    noneIdeal: !pool.some((option) => option.fit === 'ideal'),
+    noneIdeal: !pool.some((option) => option.fit === 'ideal' || option.fit === 'unclassified'),
   };
 }
 
@@ -779,7 +796,7 @@ function describeUnreachable({ seriesIds, positions, sides, input, totalGpm, clo
         `${fmtRate(input.gpa)} GPA at ${fmtRate(input.mph)} mph needs ${totalGpm.toFixed(1)} GPM, which is more than ${positions} of these tips per side can flow even wide open.`,
         `At this speed the most they will put out is about ${capacity.maxGpa.toFixed(0)} GPA.`,
         `Slow to about ${speedFor(capacity.maxTotalGpm).toFixed(1)} mph, or add nozzle positions.`,
-        `For volumes this high, disc and core nozzles go far larger than the cone tips listed here.`,
+        `A larger disc on the same core, or a 56 core instead of a 45, will carry more volume.`,
       ],
     };
   }
@@ -884,23 +901,27 @@ export function airblastCapacity({ seriesTips, positionCount, sides, mph, rowSpa
  * The range is reported alongside it so a mixed manifold is not hidden.
  */
 function dominantDroplet(positions) {
+  if (positions.every((position) => !position.dropletClass)) {
+    return { droplet: null, fromPsi: null, range: null };
+  }
+  const classified = positions.filter((position) => position.dropletClass);
   const counts = new Map();
-  for (const position of positions) {
+  for (const position of classified) {
     counts.set(position.dropletClass, (counts.get(position.dropletClass) || 0) + 1);
   }
-  let best = positions[0].dropletClass;
+  let best = classified[0].dropletClass;
   for (const [droplet, count] of counts) {
     const bestCount = counts.get(best);
     if (count > bestCount || (count === bestCount && dropletIndex(droplet) > dropletIndex(best))) {
       best = droplet;
     }
   }
-  const indexes = positions.map((position) => dropletIndex(position.dropletClass));
+  const indexes = classified.map((position) => dropletIndex(position.dropletClass));
   const low = DROPLET_CLASSES[Math.min(...indexes)];
   const high = DROPLET_CLASSES[Math.max(...indexes)];
   return {
     droplet: best,
-    fromPsi: positions.find((position) => position.dropletClass === best)?.dropletFromPsi ?? null,
+    fromPsi: classified.find((position) => position.dropletClass === best)?.dropletFromPsi ?? null,
     range: low === high ? null : { from: low, to: high },
   };
 }
@@ -957,6 +978,13 @@ function airblastWarnings({
     });
   }
 
+  if (picks[0]?.tip.pattern === 'disc-core') {
+    warnings.push({
+      level: 'info',
+      text: 'These are disc and core nozzles, the ones a Rears Powerblast ships with. A D3 45 is a number 3 disc on a 45 core. TeeJet does not publish a droplet class for them, so the pick is on flow.',
+    });
+  }
+
   if (input.mph > 4) {
     warnings.push({
       level: 'info',
@@ -964,7 +992,7 @@ function airblastWarnings({
     });
   }
 
-  const inexact = positions.find((position) => !position.dropletExact);
+  const inexact = positions.find((position) => position.dropletClass && !position.dropletExact);
   if (inexact) {
     warnings.push({
       level: 'info',

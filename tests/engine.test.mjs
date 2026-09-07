@@ -476,12 +476,27 @@ test('a rate the machine cannot flow is diagnosed rather than answered', () => {
     rowSpacingFeet: 22,
     sides: 'both',
     positionsPerSide: 6,
+    seriesFilter: ['txa'],
   });
   assert.equal(output.onRateCount, 0);
   assert.ok(output.unreachable, 'reports that the target is out of reach');
   assert.equal(output.unreachable.direction, 'over');
   assert.ok(output.unreachable.speedLimit < 2, 'tells the operator to slow down');
   assert.ok(output.unreachable.advice.length >= 3);
+
+  /* The same job on disc-core, which is what a Rears actually runs, can carry
+   * orchard volumes the moulded cones cannot. */
+  const rears = recommendAirblast({
+    sprayerType: 'airblast',
+    applicationId: 'airblast_foliar',
+    gpa: 200,
+    mph: 2,
+    rowSpacingFeet: 22,
+    sides: 'both',
+    positionsPerSide: 6,
+    seriesFilter: ['dc45', 'dc56'],
+  });
+  assert.ok(rears.onRateCount > 0, 'disc-core reaches the volume a cone tip cannot');
 });
 
 test('a rate below what the tips will pass is diagnosed the other way', () => {
@@ -507,6 +522,7 @@ test('when nothing is on rate the closest tip set is ranked first', () => {
     rowSpacingFeet: 60,
     sides: 'one',
     positionsPerSide: 8,
+    seriesFilter: ['txa', 'aitxa'],
   });
   assert.equal(output.onRateCount, 0);
   assert.equal(output.unreachable.direction, 'fixed sizes');
@@ -767,37 +783,57 @@ test('a heavy solution is sized on its water equivalent flow', () => {
   }
 });
 
-test('the disc-core reference tables are consistent and kept out of the recommender', () => {
+test('the disc-core tables are in the catalog under the names people use', () => {
   for (const set of DISC_CORE_SETS) {
-    for (const [partNo, flows] of set.rows) {
-      assert.equal(flows.length, set.psiSteps.length, `${partNo} row length`);
+    for (const [catalogPart, flows] of set.rows) {
+      assert.equal(flows.length, set.psiSteps.length, `${catalogPart} row length`);
       const charted = flows.filter((gpm) => gpm !== null);
-      assert.ok(charted.length >= 7, `${partNo} has most of its pressures charted`);
-      /* Flow can only rise with pressure. */
+      assert.ok(charted.length >= 7, `${catalogPart} has most of its pressures charted`);
       for (let index = 1; index < charted.length; index += 1) {
-        assert.ok(charted[index] > charted[index - 1], `${partNo} flow rises with pressure`);
+        assert.ok(charted[index] > charted[index - 1], `${catalogPart} flow rises with pressure`);
       }
-      /* A dash only ever appears at the low pressure end of a row. */
       const firstCharted = flows.findIndex((gpm) => gpm !== null);
       assert.ok(
         flows.slice(firstCharted).every((gpm) => gpm !== null),
-        `${partNo} has a gap in the middle of the row`,
+        `${catalogPart} has a gap in the middle of the row`,
       );
     }
-    /* TeeJet publishes no droplet class for these, so they must not be
-     * recommendable: the calculator would have to invent one. */
-    for (const [partNo] of set.rows) {
-      assert.ok(!TIPS.some((tip) => tip.partNo === partNo), `${partNo} leaked into the tip list`);
-    }
   }
-  /* But they do go far larger than the cone tips, which is the point of them. */
+
+  const d345 = TIPS.find((tip) => tip.partNo === 'D3 45');
+  assert.ok(d345, 'D3 45 is in the catalog');
+  assert.equal(d345.seriesId, 'dc45');
+  assert.equal(d345.catalogPart, 'D3-DC45');
+  close(tipFlowAtPsi(d345, 40), 0.23, 1e-9, 'D3 45 at 40 PSI');
+  close(tipFlowAtPsi(d345, 100), 0.36, 1e-9, 'D3 45 at 100 PSI');
+  close(tipPsiForFlow(d345, 0.23), 40, 1e-6, 'D3 45 solving back to 40 PSI');
+
+  /* Disc-core go far larger than the moulded cone tips, which is why a Rears
+   * machine can carry orchard volumes that TXA cannot. */
   const biggestCone = Math.max(
-    ...TIPS.filter((tip) => tip.sprayerType === 'airblast').map((tip) => tip.gpm40),
+    ...TIPS.filter((tip) => tip.pattern === 'cone').map((tip) => tip.gpm40),
   );
   const biggestDiscCore = Math.max(
-    ...DISC_CORE_SETS.flatMap((set) => set.rows.map(([, flows]) => flows[set.psiSteps.indexOf(40)] || 0)),
+    ...TIPS.filter((tip) => tip.pattern === 'disc-core').map((tip) => tip.gpm40),
   );
   assert.ok(biggestDiscCore > biggestCone * 3, 'disc-core assemblies cover the high volume end');
+});
+
+test('a Rears orchard pass is answered with disc-core nozzles', () => {
+  const output = recommendAirblast({
+    sprayerType: 'airblast',
+    applicationId: 'airblast_fungicide',
+    gpa: 100,
+    mph: 2.5,
+    rowSpacingFeet: 20,
+    sides: 'both',
+    positionsPerSide: 8,
+  });
+  assert.ok(output.results.length > 0, 'produced recommendations');
+  assert.equal(output.results[0].seriesId, 'dc45', 'the 45 core is the Rears default');
+  assert.match(output.results[0].positions[0].tip.partNo, /^D\d/);
+  assert.equal(output.results[0].positions[0].tip.pattern, 'disc-core');
+  assert.equal(output.results[0].dropletClass, null);
 });
 
 test('every family lists its sizes smallest first', () => {
