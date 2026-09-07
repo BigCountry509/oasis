@@ -51,6 +51,10 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
+function fill(node, ...children) {
+  node.replaceChildren(...children.filter((child) => child != null && child !== false));
+}
+
 const fmt = (value, decimals = 1) =>
   Number.isFinite(value) ? value.toFixed(decimals).replace(/\.0+$/, '') : '-';
 
@@ -1156,7 +1160,8 @@ function renderAccountPanel(mode = 'signin') {
   const session = store.getSession();
 
   if (session && mode !== 'reset-confirm') {
-    panel.replaceChildren(
+    fill(
+      panel,
       el('h3', { text: session.name }),
       el('p', {
         class: 'muted',
@@ -1222,7 +1227,8 @@ function renderAccountPanel(mode = 'signin') {
     }),
   );
 
-  panel.replaceChildren(
+  fill(
+    panel,
     el('h3', {
       text:
         mode === 'reset-confirm'
