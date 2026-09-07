@@ -2361,17 +2361,6 @@ async function init() {
   });
   renderCatalogPicker();
 
-  if (store.BACKEND === 'mysql') {
-    $('#storage-note').textContent =
-      'Spray records and accounts are stored in MySQL, so the same log is on every phone and computer. This device stays signed in until you sign out or the password is reset. Records saved without signal are held on the device and uploaded next time.';
-  } else if (store.accountsAreShared()) {
-    $('#storage-note').textContent =
-      'Spray records are stored in your account. Records saved without signal are held on the device and uploaded next time.';
-  } else {
-    $('#storage-note').textContent =
-      'Spray records are stored in this browser on this device. Export a CSV now and then so you have a copy, or turn on MySQL as described in the README so the log follows you.';
-  }
-
   renderAccountButton();
   refreshRecords();
 
