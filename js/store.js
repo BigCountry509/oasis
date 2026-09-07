@@ -1,0 +1,562 @@
+/*
+ * Accounts, spray records and sprayer profiles.
+ *
+ * There are two interchangeable backends behind one interface:
+ *
+ *   local  - the default. Accounts and records live in this browser. No signup,
+ *            no internet, nothing leaves the device. A PIN keeps two operators
+ *            sharing a cab tablet out of each other's logs, but it is a
+ *            convenience divider, not real security, because anyone with the
+ *            device can read the browser storage.
+ *
+ *   cloud  - switched on by filling in js/config.js with a Supabase project.
+ *            Real email and password accounts, records stored server side with
+ *            row level security, and the same log on every device. Writes made
+ *            with no signal go to an outbox and are pushed on the next load.
+ *
+ * The rest of the app only ever calls the exported functions, so it does not
+ * care which backend is live.
+ */
+
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+
+export const CLOUD_ENABLED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+export const BACKEND = CLOUD_ENABLED ? 'cloud' : 'local';
+
+const KEYS = {
+  accounts: 'nozzlecalc.accounts',
+  session: 'nozzlecalc.session',
+  records: (accountId) => `nozzlecalc.records.${accountId}`,
+  profile: (accountId) => `nozzlecalc.profile.${accountId}`,
+  outbox: 'nozzlecalc.outbox',
+};
+
+const DEVICE_ACCOUNT = 'device';
+
+function readJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function newId() {
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+  return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/* ---------- PIN hashing for local accounts ---------- */
+
+const PBKDF2_ROUNDS = 150000;
+
+function toHex(buffer) {
+  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/*
+ * A deliberately weak fallback for the case where SubtleCrypto is missing,
+ * which happens when the page is opened straight off the file system instead of
+ * being served. It still stops a casual tap-through, and hasStrongHashing()
+ * lets the UI say so out loud.
+ */
+function weakHash(text) {
+  let hash = 5381;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) + hash + text.charCodeAt(index)) | 0;
+  }
+  return `weak:${(hash >>> 0).toString(16)}`;
+}
+
+export function hasStrongHashing() {
+  return Boolean(globalThis.crypto?.subtle);
+}
+
+async function hashPin(pin, saltHex) {
+  if (!hasStrongHashing()) return weakHash(`${saltHex}:${pin}`);
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', encoder.encode(pin), 'PBKDF2', false, [
+    'deriveBits',
+  ]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: encoder.encode(saltHex),
+      iterations: PBKDF2_ROUNDS,
+      hash: 'SHA-256',
+    },
+    key,
+    256,
+  );
+  return toHex(bits);
+}
+
+function randomSalt() {
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return toHex(bytes);
+  }
+  return Math.random().toString(36).slice(2);
+}
+
+/* ---------- session ---------- */
+
+let session = readJson(KEYS.session, null);
+
+export function getSession() {
+  return session;
+}
+
+function setSession(next) {
+  session = next;
+  if (next) writeJson(KEYS.session, next);
+  else localStorage.removeItem(KEYS.session);
+}
+
+/* The account records are filed under. Signed out use gets a device drawer so
+ * nothing is lost just because somebody never made an account. */
+function activeAccountId() {
+  return session?.accountId || DEVICE_ACCOUNT;
+}
+
+/* ---------- Supabase REST ---------- */
+
+async function supabase(path, { method = 'GET', body, auth = true, headers = {} } = {}) {
+  const response = await fetch(`${SUPABASE_URL}${path}`, {
+    method,
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+      ...(auth && session?.accessToken ? { Authorization: `Bearer ${session.accessToken}` } : {}),
+      ...headers,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : null;
+
+  if (!response.ok) {
+    const message =
+      payload?.error_description || payload?.msg || payload?.message || `Request failed (${response.status})`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+async function cloudSignUp({ email, password, name }) {
+  const payload = await supabase('/auth/v1/signup', {
+    method: 'POST',
+    auth: false,
+    body: { email, password, data: { name } },
+  });
+  if (payload?.access_token) {
+    setSession({
+      mode: 'cloud',
+      accountId: payload.user.id,
+      email: payload.user.email,
+      name: name || payload.user.email,
+      accessToken: payload.access_token,
+      refreshToken: payload.refresh_token,
+    });
+    return { session, needsConfirmation: false };
+  }
+  /* Projects with email confirmation switched on return the user with no token. */
+  return { session: null, needsConfirmation: true };
+}
+
+async function cloudSignIn({ email, password }) {
+  const payload = await supabase('/auth/v1/token?grant_type=password', {
+    method: 'POST',
+    auth: false,
+    body: { email, password },
+  });
+  setSession({
+    mode: 'cloud',
+    accountId: payload.user.id,
+    email: payload.user.email,
+    name: payload.user.user_metadata?.name || payload.user.email,
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+  });
+  return session;
+}
+
+async function cloudRefresh() {
+  if (!session?.refreshToken) return null;
+  try {
+    const payload = await supabase('/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST',
+      auth: false,
+      body: { refresh_token: session.refreshToken },
+    });
+    setSession({
+      ...session,
+      accessToken: payload.access_token,
+      refreshToken: payload.refresh_token,
+    });
+    return session;
+  } catch {
+    setSession(null);
+    return null;
+  }
+}
+
+/* One retry after a token refresh, so a stale token does not look like a
+ * failure to the operator. */
+async function withAuth(request) {
+  try {
+    return await request();
+  } catch (error) {
+    if (error.status === 401) {
+      const refreshed = await cloudRefresh();
+      if (refreshed) return request();
+    }
+    throw error;
+  }
+}
+
+/* ---------- accounts ---------- */
+
+export function listLocalAccounts() {
+  return readJson(KEYS.accounts, []).map(({ id, name, createdAt }) => ({ id, name, createdAt }));
+}
+
+export async function signUp({ name, email, password, pin }) {
+  if (CLOUD_ENABLED) return cloudSignUp({ email, password, name });
+
+  const accounts = readJson(KEYS.accounts, []);
+  const trimmed = (name || '').trim();
+  if (!trimmed) throw new Error('Give the account a name.');
+  if (accounts.some((account) => account.name.toLowerCase() === trimmed.toLowerCase())) {
+    throw new Error(`There is already an account called ${trimmed} on this device.`);
+  }
+  const salt = randomSalt();
+  const account = {
+    id: newId(),
+    name: trimmed,
+    salt,
+    hash: pin ? await hashPin(pin, salt) : null,
+    createdAt: new Date().toISOString(),
+  };
+  accounts.push(account);
+  writeJson(KEYS.accounts, accounts);
+  setSession({ mode: 'local', accountId: account.id, name: account.name });
+  return { session, needsConfirmation: false };
+}
+
+export async function signIn({ accountId, email, password, pin }) {
+  if (CLOUD_ENABLED) return cloudSignIn({ email, password });
+
+  const accounts = readJson(KEYS.accounts, []);
+  const account = accounts.find((item) => item.id === accountId);
+  if (!account) throw new Error('That account is not on this device.');
+  if (account.hash) {
+    const attempt = await hashPin(pin || '', account.salt);
+    if (attempt !== account.hash) throw new Error('That PIN does not match.');
+  }
+  setSession({ mode: 'local', accountId: account.id, name: account.name });
+  return session;
+}
+
+export async function signOut() {
+  if (CLOUD_ENABLED && session?.accessToken) {
+    try {
+      await supabase('/auth/v1/logout', { method: 'POST' });
+    } catch {
+      /* Signing out locally matters more than telling the server about it. */
+    }
+  }
+  setSession(null);
+}
+
+export async function deleteLocalAccount(accountId) {
+  if (CLOUD_ENABLED) throw new Error('Cloud accounts are managed in Supabase.');
+  const accounts = readJson(KEYS.accounts, []).filter((account) => account.id !== accountId);
+  writeJson(KEYS.accounts, accounts);
+  localStorage.removeItem(KEYS.records(accountId));
+  localStorage.removeItem(KEYS.profile(accountId));
+  if (session?.accountId === accountId) setSession(null);
+}
+
+/* ---------- spray records ---------- */
+
+/*
+ * The stored fields cover what a pesticide application record is normally
+ * expected to show: what was applied, where, when, how much, by whom, on what
+ * equipment and in what weather.
+ */
+export function emptyRecord() {
+  return {
+    id: null,
+    name: '',
+    appliedOn: new Date().toISOString().slice(0, 10),
+    fieldName: '',
+    acres: null,
+    crop: '',
+    applicationId: '',
+    applicationName: '',
+    sprayerType: 'boom',
+    gpa: null,
+    mph: null,
+    psi: null,
+    spacingInches: null,
+    rowSpacingFeet: null,
+    nozzles: [],
+    dropletClass: '',
+    products: [],
+    windMph: null,
+    windDirection: '',
+    airTempF: null,
+    humidity: null,
+    applicator: '',
+    licenseNo: '',
+    notes: '',
+    calc: null,
+  };
+}
+
+const RECORD_TO_ROW = {
+  id: 'id',
+  name: 'name',
+  appliedOn: 'applied_on',
+  fieldName: 'field_name',
+  acres: 'acres',
+  crop: 'crop',
+  applicationId: 'application_id',
+  applicationName: 'application_name',
+  sprayerType: 'sprayer_type',
+  gpa: 'gpa',
+  mph: 'mph',
+  psi: 'psi',
+  spacingInches: 'spacing_inches',
+  rowSpacingFeet: 'row_spacing_feet',
+  nozzles: 'nozzles',
+  dropletClass: 'droplet_class',
+  products: 'products',
+  windMph: 'wind_mph',
+  windDirection: 'wind_direction',
+  airTempF: 'air_temp_f',
+  humidity: 'humidity',
+  applicator: 'applicator',
+  licenseNo: 'license_no',
+  notes: 'notes',
+  calc: 'calc',
+  createdAt: 'created_at',
+};
+
+function toRow(record) {
+  const row = {};
+  for (const [key, column] of Object.entries(RECORD_TO_ROW)) {
+    if (key === 'id' && !record.id) continue;
+    if (key === 'createdAt') continue;
+    if (record[key] !== undefined) row[column] = record[key] === '' ? null : record[key];
+  }
+  return row;
+}
+
+function fromRow(row) {
+  const record = {};
+  for (const [key, column] of Object.entries(RECORD_TO_ROW)) {
+    record[key] = row[column] ?? null;
+  }
+  record.nozzles = row.nozzles || [];
+  record.products = row.products || [];
+  return record;
+}
+
+function localRecords() {
+  return readJson(KEYS.records(activeAccountId()), []);
+}
+
+function sortRecords(records) {
+  return [...records].sort((a, b) => {
+    const left = a.appliedOn || a.createdAt || '';
+    const right = b.appliedOn || b.createdAt || '';
+    if (left === right) return (b.createdAt || '').localeCompare(a.createdAt || '');
+    return right.localeCompare(left);
+  });
+}
+
+export async function listRecords() {
+  if (CLOUD_ENABLED && session?.mode === 'cloud') {
+    await flushOutbox();
+    const rows = await withAuth(() =>
+      supabase('/rest/v1/spray_records?select=*&order=applied_on.desc,created_at.desc'),
+    );
+    return rows.map(fromRow);
+  }
+  return sortRecords(localRecords());
+}
+
+export async function saveRecord(record) {
+  const stamped = {
+    ...record,
+    createdAt: record.createdAt || new Date().toISOString(),
+  };
+
+  if (CLOUD_ENABLED && session?.mode === 'cloud') {
+    try {
+      const row = toRow(stamped);
+      const rows = stamped.id
+        ? await withAuth(() =>
+            supabase(`/rest/v1/spray_records?id=eq.${stamped.id}`, {
+              method: 'PATCH',
+              body: row,
+              headers: { Prefer: 'return=representation' },
+            }),
+          )
+        : await withAuth(() =>
+            supabase('/rest/v1/spray_records', {
+              method: 'POST',
+              body: row,
+              headers: { Prefer: 'return=representation' },
+            }),
+          );
+      return { record: fromRow(rows[0]), queued: false };
+    } catch (error) {
+      /* Out of signal in the field: hold it and push it later rather than
+       * losing the record. */
+      if (isNetworkError(error)) {
+        queueOutbox(stamped);
+        return { record: stamped, queued: true };
+      }
+      throw error;
+    }
+  }
+
+  const records = localRecords();
+  if (!stamped.id) stamped.id = newId();
+  const index = records.findIndex((item) => item.id === stamped.id);
+  if (index >= 0) records[index] = stamped;
+  else records.push(stamped);
+  writeJson(KEYS.records(activeAccountId()), records);
+  return { record: stamped, queued: false };
+}
+
+export async function deleteRecord(id) {
+  if (CLOUD_ENABLED && session?.mode === 'cloud') {
+    await withAuth(() =>
+      supabase(`/rest/v1/spray_records?id=eq.${id}`, { method: 'DELETE' }),
+    );
+    return;
+  }
+  const records = localRecords().filter((record) => record.id !== id);
+  writeJson(KEYS.records(activeAccountId()), records);
+}
+
+function isNetworkError(error) {
+  return error instanceof TypeError || error.message === 'Failed to fetch';
+}
+
+/* ---------- offline outbox for cloud mode ---------- */
+
+function queueOutbox(record) {
+  const outbox = readJson(KEYS.outbox, []);
+  outbox.push({ ...record, queuedAt: new Date().toISOString() });
+  writeJson(KEYS.outbox, outbox);
+}
+
+export function outboxCount() {
+  return readJson(KEYS.outbox, []).length;
+}
+
+export async function flushOutbox() {
+  if (!CLOUD_ENABLED || session?.mode !== 'cloud') return 0;
+  const outbox = readJson(KEYS.outbox, []);
+  if (!outbox.length) return 0;
+
+  const remaining = [];
+  let pushed = 0;
+  for (const record of outbox) {
+    try {
+      const { queuedAt, ...rest } = record;
+      await withAuth(() =>
+        supabase('/rest/v1/spray_records', { method: 'POST', body: toRow(rest) }),
+      );
+      pushed += 1;
+    } catch (error) {
+      if (isNetworkError(error)) remaining.push(record);
+      /* A record the server rejects outright is dropped rather than retried
+       * forever; anything else stays queued. */
+    }
+  }
+  writeJson(KEYS.outbox, remaining);
+  return pushed;
+}
+
+/* ---------- sprayer profile ---------- */
+
+export function loadProfile() {
+  return readJson(KEYS.profile(activeAccountId()), null);
+}
+
+export function saveProfile(profile) {
+  writeJson(KEYS.profile(activeAccountId()), profile);
+}
+
+/* ---------- CSV export ---------- */
+
+const CSV_COLUMNS = [
+  ['appliedOn', 'Date'],
+  ['name', 'Application name'],
+  ['fieldName', 'Field'],
+  ['acres', 'Acres'],
+  ['crop', 'Crop'],
+  ['applicationName', 'Job type'],
+  ['sprayerType', 'Sprayer'],
+  ['gpa', 'GPA'],
+  ['mph', 'MPH'],
+  ['psi', 'PSI'],
+  ['spacingInches', 'Tip spacing (in)'],
+  ['rowSpacingFeet', 'Row spacing (ft)'],
+  ['nozzleList', 'Nozzles'],
+  ['dropletClass', 'Droplet class'],
+  ['productList', 'Products'],
+  ['windMph', 'Wind (mph)'],
+  ['windDirection', 'Wind direction'],
+  ['airTempF', 'Air temp (F)'],
+  ['humidity', 'Humidity (%)'],
+  ['applicator', 'Applicator'],
+  ['licenseNo', 'License no'],
+  ['notes', 'Notes'],
+];
+
+function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  const text = String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+export function recordsToCsv(records) {
+  const header = CSV_COLUMNS.map(([, label]) => csvCell(label)).join(',');
+  const lines = records.map((record) => {
+    const flat = {
+      ...record,
+      nozzleList: (record.nozzles || [])
+        .map((nozzle) =>
+          nozzle.position
+            ? `pos ${nozzle.position}: ${nozzle.partNo} @ ${nozzle.psi} PSI`
+            : `${nozzle.partNo} @ ${nozzle.psi} PSI`,
+        )
+        .join('; '),
+      productList: (record.products || [])
+        .map((product) =>
+          [product.name, product.rate, product.unit, product.epaRegNo && `EPA ${product.epaRegNo}`]
+            .filter(Boolean)
+            .join(' '),
+        )
+        .join('; '),
+    };
+    return CSV_COLUMNS.map(([key]) => csvCell(flat[key])).join(',');
+  });
+  return [header, ...lines].join('\n');
+}
