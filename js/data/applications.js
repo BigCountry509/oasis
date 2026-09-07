@@ -1,0 +1,280 @@
+/*
+ * Spray job presets.
+ *
+ * Each preset says what droplet spectrum the job wants and what carrier volume
+ * keeps that spectrum working. The droplet targets follow the long standing
+ * extension guidance: coverage driven jobs (contact herbicides, fungicides,
+ * insecticides) want Fine to Medium, translocated products tolerate Coarse, soil
+ * targets and restricted auxins want the coarse end, and the coarser you go the
+ * more carrier volume you need to keep the same number of droplets on the leaf.
+ *
+ * idealMin / idealMax are the classes that score best. acceptMin / acceptMax is
+ * the wider band that is still allowed, just scored lower.
+ */
+
+export const SPRAYER_TYPES = {
+  boom: {
+    id: 'boom',
+    name: 'Boom sprayer',
+    description: 'Self propelled, pull type or three point boom with tips on a spacing.',
+  },
+  airblast: {
+    id: 'airblast',
+    name: 'Air blast sprayer',
+    description: 'Orchard, vineyard or specialty crop air blast with nozzles on manifolds each side.',
+  },
+};
+
+export const APPLICATIONS = [
+  {
+    id: 'burndown',
+    name: 'Burndown / pre-emerge residual',
+    sprayerType: 'boom',
+    blurb: 'Soil is the target, so drift control matters more than leaf coverage.',
+    idealMin: 'C',
+    idealMax: 'VC',
+    acceptMin: 'M',
+    acceptMax: 'XC',
+    gpaDefault: 15,
+    gpaMin: 10,
+    gpaTypical: [10, 20],
+    preferSeries: ['aixr', 'tt', 'ai', 'tti'],
+    guidance: [
+      'A residual has to reach the soil surface, so coarse droplets are an advantage rather than a compromise.',
+      'Keep at least 10 GPA so the coarse droplets still wet the whole soil surface.',
+    ],
+  },
+  {
+    id: 'post_contact',
+    name: 'Post-emerge contact herbicide',
+    sprayerType: 'boom',
+    blurb: 'Kills only what it touches, so coverage is everything.',
+    idealMin: 'F',
+    idealMax: 'M',
+    acceptMin: 'F',
+    acceptMax: 'C',
+    gpaDefault: 20,
+    gpaMin: 15,
+    gpaTypical: [15, 25],
+    preferSeries: ['xr', 'tt', 'ttj60', 'aixr'],
+    guidance: [
+      'Contact products need droplet numbers on the leaf. Run the finest droplet the wind will allow and lift carrier volume to 15 to 20 GPA or more.',
+      'A twin fan tip such as TTJ60 hits upright weeds from two angles and helps on grasses.',
+    ],
+  },
+  {
+    id: 'post_systemic',
+    name: 'Post-emerge systemic herbicide',
+    sprayerType: 'boom',
+    blurb: 'Translocated products move in the plant, so you can trade some coverage for drift control.',
+    idealMin: 'M',
+    idealMax: 'C',
+    acceptMin: 'F',
+    acceptMax: 'VC',
+    gpaDefault: 15,
+    gpaMin: 10,
+    gpaTypical: [10, 20],
+    preferSeries: ['aixr', 'tt', 'ai'],
+    guidance: [
+      'Glyphosate type products tolerate medium to coarse droplets well, which is why AIXR is the common choice.',
+      'Watch carrier volume rather than droplet size: very high volumes can dilute and reduce activity on some systemic products.',
+    ],
+  },
+  {
+    id: 'restricted',
+    name: 'Restricted auxin (dicamba / 2,4-D choline)',
+    sprayerType: 'boom',
+    blurb: 'The label dictates the tip, the pressure and the minimum volume. This preset only narrows the field.',
+    idealMin: 'XC',
+    idealMax: 'UC',
+    acceptMin: 'VC',
+    acceptMax: 'UC',
+    gpaDefault: 15,
+    gpaMin: 15,
+    gpaTypical: [15, 20],
+    preferSeries: ['tti', 'tti60'],
+    requiresLabelCheck: true,
+    labelLinks: [
+      { label: 'TeeJet drift reduction and label nozzle information', url: 'https://www.teejet.com/' },
+      { label: 'Check the product label nozzle list before you spray', url: 'https://www.cdms.net/' },
+    ],
+    guidance: [
+      'These labels carry an approved nozzle list with a specific tip, a specific pressure range and a minimum carrier volume. The list is enforceable and it changes, so confirm the current one for your exact product before you order tips.',
+      'Registrations for over the top dicamba products have changed repeatedly. Confirm the product is currently registered for your crop and state.',
+      'Wind speed limits, buffer distances and boom height are part of the same label requirement as the nozzle.',
+    ],
+  },
+  {
+    id: 'fungicide',
+    name: 'Fungicide',
+    sprayerType: 'boom',
+    blurb: 'Needs droplets down into the canopy and onto both leaf surfaces.',
+    idealMin: 'F',
+    idealMax: 'M',
+    acceptMin: 'F',
+    acceptMax: 'C',
+    gpaDefault: 15,
+    gpaMin: 10,
+    gpaTypical: [15, 20],
+    preferSeries: ['ttj60', 'aittj60', 'xr', 'tt', 'ai3070'],
+    guidance: [
+      'Twin fan tips are the standard fungicide choice because the forward and back fans reach both sides of upright leaves and heads.',
+      'Do not drop below about 15 GPA on a thick canopy. Volume is what carries droplets to the lower leaves.',
+    ],
+  },
+  {
+    id: 'insecticide',
+    name: 'Insecticide',
+    sprayerType: 'boom',
+    blurb: 'Contact activity on a moving target, so coverage again drives the choice.',
+    idealMin: 'F',
+    idealMax: 'M',
+    acceptMin: 'F',
+    acceptMax: 'C',
+    gpaDefault: 15,
+    gpaMin: 10,
+    gpaTypical: [10, 20],
+    preferSeries: ['xr', 'ttj60', 'tt', 'aittj60'],
+    guidance: [
+      'Fine to medium droplets give the droplet numbers needed for contact insecticides.',
+      'Spray when the insects are active and the wind is down rather than pushing a fine droplet into a breeze.',
+    ],
+  },
+  {
+    id: 'fertilizer',
+    name: 'Liquid fertilizer / UAN broadcast',
+    sprayerType: 'boom',
+    blurb: 'A soil target with no coverage requirement, so run it as coarse as the tip will go.',
+    idealMin: 'VC',
+    idealMax: 'UC',
+    acceptMin: 'C',
+    acceptMax: 'UC',
+    gpaDefault: 25,
+    gpaMin: 15,
+    gpaTypical: [20, 40],
+    preferSeries: ['tti', 'ai', 'aixr', 'tt'],
+    guidance: [
+      'Coarse droplets keep UAN off the leaves and cut the burn on emerged crops. Streamer bars and flooding tips are the traditional answer and a TTI is the coarsest flat fan alternative.',
+      'UAN is heavier than water. A tip rated in GPM on water delivers less weight-corrected volume, so calibrate with the actual solution, not water.',
+      'Fertilizer solutions are hard on tips. Stainless or ceramic orifices last far longer than polymer.',
+    ],
+  },
+  {
+    id: 'band',
+    name: 'Band spray / directed row application',
+    sprayerType: 'boom',
+    blurb: 'Rate is applied over the band width, not the whole acre.',
+    idealMin: 'M',
+    idealMax: 'C',
+    acceptMin: 'F',
+    acceptMax: 'VC',
+    gpaDefault: 15,
+    gpaMin: 10,
+    gpaTypical: [10, 20],
+    preferSeries: ['tt', 'aixr', 'xr'],
+    guidance: [
+      'Enter the band width instead of the tip spacing. The tool then works out flow for the band only.',
+      'Banding cuts product use in proportion to band width over row width, so a 10 inch band on 30 inch rows uses about a third of the broadcast rate.',
+      'Even flat fan tips are used for bands so the pattern edge stays sharp. Set boom height so the pattern lands exactly on the band.',
+    ],
+  },
+  {
+    id: 'pgr',
+    name: 'PGR / harvest aid / desiccant',
+    sprayerType: 'boom',
+    blurb: 'Contact-driven, and usually applied into a mature canopy.',
+    idealMin: 'M',
+    idealMax: 'C',
+    acceptMin: 'F',
+    acceptMax: 'VC',
+    gpaDefault: 15,
+    gpaMin: 12,
+    gpaTypical: [15, 20],
+    preferSeries: ['ttj60', 'aittj60', 'tt', 'aixr'],
+    guidance: [
+      'Harvest aids and desiccants are contact products on a heavy canopy, so keep carrier volume up and use a twin fan if you have one.',
+      'These are often the most drift sensitive passes of the year because neighbouring crops are still green. Weigh droplet size against the wind.',
+    ],
+  },
+  {
+    id: 'airblast_fungicide',
+    name: 'Air blast fungicide',
+    sprayerType: 'airblast',
+    blurb: 'The air stream does the delivery. Fine droplets ride it into the canopy.',
+    idealMin: 'VF',
+    idealMax: 'F',
+    acceptMin: 'VF',
+    acceptMax: 'M',
+    gpaDefault: 100,
+    gpaMin: 30,
+    gpaTypical: [50, 150],
+    preferSeries: ['txa'],
+    guidance: [
+      'Match the air volume to the canopy first. Nozzles only meter the liquid, the fan is what moves it.',
+      'Shut off the tips that are spraying over the top or under the tree. Empty air is wasted spray.',
+      'Set roughly two thirds to three quarters of the total output on the top half of the canopy, since that is where most of the leaf area sits.',
+    ],
+  },
+  {
+    id: 'airblast_insecticide',
+    name: 'Air blast insecticide',
+    sprayerType: 'airblast',
+    blurb: 'Contact coverage through the whole canopy.',
+    idealMin: 'VF',
+    idealMax: 'F',
+    acceptMin: 'VF',
+    acceptMax: 'M',
+    gpaDefault: 100,
+    gpaMin: 30,
+    gpaTypical: [50, 150],
+    preferSeries: ['txa'],
+    guidance: [
+      'Slow down before you add pressure. Ground speed has more effect on canopy penetration than nozzle pressure does.',
+      'Spray in the calm of early morning or evening. Air blast puts spray up where the wind can take it.',
+    ],
+  },
+  {
+    id: 'airblast_lowdrift',
+    name: 'Air blast, drift sensitive site',
+    sprayerType: 'airblast',
+    blurb: 'Air induction cone tips for coarser droplets near a boundary.',
+    idealMin: 'C',
+    idealMax: 'XC',
+    acceptMin: 'M',
+    acceptMax: 'UC',
+    gpaDefault: 100,
+    gpaMin: 40,
+    gpaTypical: [60, 150],
+    preferSeries: ['aitxa'],
+    guidance: [
+      'Air induction cone tips need at least 60 PSI before the venturi works properly.',
+      'Coarser droplets rely more on the air stream to reach the far side of the canopy, so keep speed down.',
+    ],
+  },
+  {
+    id: 'airblast_foliar',
+    name: 'Air blast foliar feed / dormant oil',
+    sprayerType: 'airblast',
+    blurb: 'High volume coverage jobs on trees and vines.',
+    idealMin: 'VF',
+    idealMax: 'M',
+    acceptMin: 'VF',
+    acceptMax: 'C',
+    gpaDefault: 150,
+    gpaMin: 50,
+    gpaTypical: [100, 250],
+    preferSeries: ['txa', 'aitxa'],
+    guidance: [
+      'Dormant applications are about wetting every surface, so volume is the priority.',
+      'Oils and foliar feeds are abrasive or corrosive. Ceramic orifices are worth the money here.',
+    ],
+  },
+];
+
+export function getApplication(id) {
+  return APPLICATIONS.find((application) => application.id === id);
+}
+
+export function applicationsFor(sprayerType) {
+  return APPLICATIONS.filter((application) => application.sprayerType === sprayerType);
+}
