@@ -7,17 +7,9 @@
  */
 
 import { APPLICATIONS, SPRAYER_TYPES, applicationsFor, getApplication } from './data/applications.js';
-import {
-  DROPLET_COLORS,
-  DROPLET_NAMES,
-  SERIES,
-  TIPS,
-  dropletAtPsi,
-  flowAtPsi,
-} from './data/nozzles.js';
+import { DROPLET_COLORS, DROPLET_NAMES, SERIES, TIPS, flowAtPsi } from './data/nozzles.js';
 import {
   airblastGpa,
-  boomGpa,
   boomTable,
   ozPerMinute,
   pressureWindow,
@@ -37,6 +29,7 @@ function el(tag, props = {}, ...children) {
   for (const [key, value] of Object.entries(props)) {
     if (value === null || value === undefined || value === false) continue;
     if (key === 'class') node.className = value;
+    else if (key === 'style') node.setAttribute('style', value);
     else if (key === 'text') node.textContent = value;
     else if (key === 'html') node.innerHTML = value;
     else if (key === 'dataset') Object.assign(node.dataset, value);
@@ -61,15 +54,20 @@ function num(input) {
   return Number.isFinite(value) ? value : NaN;
 }
 
+const messageTimers = new WeakMap();
+
 function message(node, text, isError = false) {
   node.textContent = text;
   node.classList.toggle('is-error', isError);
+  clearTimeout(messageTimers.get(node));
   if (text) {
-    clearTimeout(node.dataset.timer);
-    node.dataset.timer = setTimeout(() => {
-      node.textContent = '';
-      node.classList.remove('is-error');
-    }, 6000);
+    messageTimers.set(
+      node,
+      setTimeout(() => {
+        node.textContent = '';
+        node.classList.remove('is-error');
+      }, 8000),
+    );
   }
 }
 
@@ -369,9 +367,18 @@ function renderResults(output) {
     output.mode === 'boom'
       ? `Each tip has to flow ${fmtFixed(output.requiredGpm, 3)} GPM (${fmt(output.requiredOzPerMin)} oz per minute in a catch test). ${output.allConsidered} tips in the catalog can hit that rate inside their own pressure range.`
       : `The machine has to put out ${fmtFixed(output.requiredTotalGpm, 2)} GPM in total, which is ${fmtFixed(output.requiredPerSideGpm, 2)} GPM per side across ${output.positionsPerSide} positions.`;
-  $('#results-summary').textContent = summary;
+  $('#results-summary').textContent =
+    output.mode === 'airblast' && output.unreachable
+      ? `${summary} Nothing in the catalog lands within 10% of that, so what follows is the closest it can get.`
+      : summary;
 
   const notices = [];
+  if (output.unreachable) {
+    notices.push({
+      level: 'critical',
+      text: output.unreachable.advice.join(' '),
+    });
+  }
   if (output.noneIdeal) {
     notices.push({
       level: 'warn',
@@ -541,7 +548,18 @@ function renderAirblastResult(option, index, output) {
           text: `${option.positions.length} nozzles per side, ${output.sides === 'both' ? 'spraying both sides in one pass' : 'one side per pass'}`,
         }),
       ),
-      dropletBadge(option.dropletClass, option.dropletExact, option.dropletFromPsi),
+      el(
+        'div',
+        { style: 'text-align:right' },
+        dropletBadge(option.dropletClass, option.dropletExact, option.dropletFromPsi),
+        option.dropletRange
+          ? el('div', {
+              class: 'muted',
+              style: 'font-size:.82rem;margin-top:.3rem',
+              text: `${DROPLET_NAMES[option.dropletRange.from]} to ${DROPLET_NAMES[option.dropletRange.to]} across the manifold`,
+            })
+          : null,
+      ),
     ),
 
     readout([
@@ -568,6 +586,7 @@ function renderAirblastResult(option, index, output) {
             el('th', { text: 'Tip' }),
             el('th', { text: 'GPM' }),
             el('th', { text: 'oz/min' }),
+            el('th', { text: 'Droplet' }),
           ),
         ),
         el(
@@ -589,6 +608,7 @@ function renderAirblastResult(option, index, output) {
               el('td', { text: position.tip.partNo }),
               el('td', { text: fmtFixed(position.gpm, 3) }),
               el('td', { text: fmt(position.ozPerMin) }),
+              el('td', { text: position.dropletClass }),
             ),
           ),
         ),
@@ -718,6 +738,7 @@ function buildDraftFromAirblast(option) {
       gpm: round(position.gpm, 4),
       ozPerMin: round(position.ozPerMin, 1),
       sharePercent: Math.round(position.share * 100),
+      dropletClass: position.dropletClass,
     })),
     calc: {
       mode: 'airblast',

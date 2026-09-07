@@ -469,18 +469,14 @@ export function recommendAirblast(input) {
         sides,
       });
 
-      const droplet = dropletAtPsi(picks[0].tip, psi);
-      const fit = dropletFit(droplet.droplet, application);
-      const ratePoints = Math.max(0, 30 - Math.abs(rateError) * 300);
-      const driftPoints = driftScore(picks[0].tip, input.windMph);
-      const seriesPoints = seriesScore(picks[0].tip, application);
-      const score = fit.score + ratePoints + driftPoints + seriesPoints;
-
-      options.push({
-        seriesId,
-        seriesName: picks[0].tip.seriesName,
-        psi,
-        positions: picks.map((pick, index) => ({
+      /*
+       * Positions carry different capacities, and capacity changes the droplet
+       * class, so each position is classified on its own rather than assuming
+       * the whole manifold sprays like the bottom tip.
+       */
+      const positions = picks.map((pick, index) => {
+        const droplet = dropletAtPsi(pick.tip, psi);
+        return {
           position: index + 1,
           fromBottom: index + 1,
           share: weights[index],
@@ -488,10 +484,44 @@ export function recommendAirblast(input) {
           tip: pick.tip,
           gpm: pick.gpm,
           ozPerMin: ozPerMinute(pick.gpm),
-        })),
-        dropletClass: droplet.droplet,
-        dropletFromPsi: droplet.fromPsi,
-        dropletExact: droplet.exact,
+          dropletClass: droplet.droplet,
+          dropletFromPsi: droplet.fromPsi,
+          dropletExact: droplet.exact,
+        };
+      });
+
+      const fits = positions.map((position) => dropletFit(position.dropletClass, application));
+      const fit = {
+        fit: fits.every((item) => item.fit === 'ideal')
+          ? 'ideal'
+          : fits.some((item) => item.fit === 'outside')
+            ? 'outside'
+            : 'acceptable',
+        score: fits.reduce((sum, item) => sum + item.score, 0) / fits.length,
+      };
+      const headline = dominantDroplet(positions);
+
+      /*
+       * Rate accuracy has to stay strictly monotonic. Clamping it at zero once
+       * the error passes some threshold makes every bad option tie, and then
+       * the ranking falls back to enumeration order and can put a wildly under
+       * rate tip set on top.
+       */
+      const ratePoints = 40 / (1 + Math.abs(rateError) * 20);
+      const pressurePoints = airblastPressureScore(psi, picks[0].tip);
+      const driftPoints = driftScore(picks[0].tip, input.windMph);
+      const seriesPoints = seriesScore(picks[0].tip, application);
+      const score = fit.score + ratePoints + pressurePoints + driftPoints + seriesPoints;
+
+      options.push({
+        seriesId,
+        seriesName: picks[0].tip.seriesName,
+        psi,
+        positions,
+        dropletClass: headline.droplet,
+        dropletFromPsi: headline.fromPsi,
+        dropletExact: positions.every((position) => position.dropletExact),
+        dropletRange: headline.range,
         fit: fit.fit,
         score,
         requiredTotalGpm: totalGpm,
@@ -500,24 +530,50 @@ export function recommendAirblast(input) {
         deliveredTotalGpm: deliveredTotal,
         rateErrorPercent: rateError * 100,
         actualGpa,
-        warnings: airblastWarnings({ picks, psi, droplet, input, application, rateError }),
+        warnings: airblastWarnings({
+          picks,
+          positions,
+          psi,
+          input,
+          application,
+          rateError,
+          deliveredTotal,
+          sides,
+        }),
       });
     }
   }
 
   options.sort((a, b) => b.score - a.score);
 
+  /*
+   * Tips only come in fixed sizes, so a set never lands exactly on the target.
+   * Within 10 per cent is trimmable with ground speed. Anything further out is
+   * not a recommendation, it is a warning that the machine cannot do the job as
+   * set up, so those are held back and explained instead.
+   */
+  const onRate = options.filter((option) => Math.abs(option.rateErrorPercent) <= 10);
+  /* When nothing can hit the rate, the only thing that matters is which set
+   * gets closest, so the usual scoring is set aside. */
+  const pool = onRate.length
+    ? onRate
+    : [...options].sort((a, b) => Math.abs(a.rateErrorPercent) - Math.abs(b.rateErrorPercent));
+
   /* One option per series and pressure neighbourhood, so the list is not six
    * near identical pressures of the same tip set. */
   const seen = new Set();
   const results = [];
-  for (const option of options) {
+  for (const option of pool) {
     const key = `${option.seriesId}:${Math.round(option.psi / 20)}`;
     if (seen.has(key)) continue;
     seen.add(key);
     results.push(option);
     if (results.length >= 5) break;
   }
+
+  const unreachable = onRate.length
+    ? null
+    : describeUnreachable({ seriesIds, positions, sides, input, totalGpm, closest: pool[0] });
 
   return {
     mode: 'airblast',
@@ -531,7 +587,181 @@ export function recommendAirblast(input) {
     windFloor: windDropletFloor(input.windMph),
     results,
     allConsidered: options.length,
-    noneIdeal: !options.some((option) => option.fit === 'ideal'),
+    onRateCount: onRate.length,
+    unreachable,
+    noneIdeal: !pool.some((option) => option.fit === 'ideal'),
+  };
+}
+
+/*
+ * Speed that makes a given total flow deliver the target rate. Trimming with
+ * ground speed is the standard fix for a tip set that cannot land exactly on
+ * rate, because tips only come in fixed sizes.
+ */
+export function airblastTrimSpeed({ gpm, gpa, rowSpacingFeet, sides }) {
+  return (gpm * airblastConstant(sides)) / (gpa * rowSpacingFeet);
+}
+
+/*
+ * Why no tip set gets within 10 per cent, and what to change about it. There
+ * are three different reasons and they need different answers:
+ *
+ *   over  - the target needs more flow than these tips can pass wide open
+ *   under - the target needs less flow than they pass at their lowest pressure
+ *   fixed sizes - the target sits inside that envelope, but the canopy split
+ *                 forces small tips on the low positions and no combination of
+ *                 the sizes that exist adds up to the target at one shared
+ *                 pressure. This is the common one, and the fix is ground speed.
+ */
+function describeUnreachable({ seriesIds, positions, sides, input, totalGpm, closest }) {
+  let best = null;
+  for (const seriesId of seriesIds) {
+    const seriesTips = tipsInSeries(seriesId);
+    if (!seriesTips.length) continue;
+    const capacity = airblastCapacity({
+      seriesTips,
+      positionCount: positions,
+      sides,
+      mph: input.mph,
+      rowSpacingFeet: input.rowSpacingFeet,
+    });
+    if (!best || capacity.maxTotalGpm > best.capacity.maxTotalGpm) {
+      best = { seriesId, seriesName: seriesTips[0].seriesName, capacity };
+    }
+  }
+  if (!best) return null;
+
+  const { capacity } = best;
+  const constant = airblastConstant(sides);
+  const speedFor = (gpm) => (gpm * constant) / (input.gpa * input.rowSpacingFeet);
+
+  if (totalGpm > capacity.maxTotalGpm) {
+    return {
+      direction: 'over',
+      seriesName: best.seriesName,
+      capacity,
+      speedLimit: speedFor(capacity.maxTotalGpm),
+      advice: [
+        `${fmtRate(input.gpa)} GPA at ${fmtRate(input.mph)} mph needs ${totalGpm.toFixed(1)} GPM, which is more than ${positions} of these tips per side can flow even wide open.`,
+        `At this speed the most they will put out is about ${capacity.maxGpa.toFixed(0)} GPA.`,
+        `Slow to about ${speedFor(capacity.maxTotalGpm).toFixed(1)} mph, or add nozzle positions.`,
+        `For volumes this high, disc and core nozzles go far larger than the cone tips listed here.`,
+      ],
+    };
+  }
+
+  if (totalGpm < capacity.minTotalGpm) {
+    return {
+      direction: 'under',
+      seriesName: best.seriesName,
+      capacity,
+      speedLimit: speedFor(capacity.minTotalGpm),
+      advice: [
+        `${fmtRate(input.gpa)} GPA at ${fmtRate(input.mph)} mph only needs ${totalGpm.toFixed(2)} GPM, less than ${positions} of these tips per side will flow at their lowest pressure.`,
+        `At this speed the least they will put out is about ${capacity.minGpa.toFixed(0)} GPA.`,
+        `Speed up to about ${speedFor(capacity.minTotalGpm).toFixed(1)} mph, or run fewer nozzle positions.`,
+      ],
+    };
+  }
+
+  const trimSpeed = closest
+    ? airblastTrimSpeed({
+        gpm: closest.deliveredTotalGpm,
+        gpa: input.gpa,
+        rowSpacingFeet: input.rowSpacingFeet,
+        sides,
+      })
+    : null;
+
+  return {
+    direction: 'fixed sizes',
+    seriesName: best.seriesName,
+    capacity,
+    trimSpeed,
+    advice: [
+      `The machine can flow this rate, but tips only come in fixed sizes and the canopy split puts small tips on the bottom positions, so no combination lands within 10 per cent at one shared pressure.`,
+      closest
+        ? `The closest set below is ${Math.abs(closest.rateErrorPercent).toFixed(0)} per cent ${closest.rateErrorPercent < 0 ? 'under' : 'over'} rate.`
+        : null,
+      trimSpeed
+        ? `Run that set at about ${trimSpeed.toFixed(1)} mph instead of ${fmtRate(input.mph)} mph and you are on rate.`
+        : null,
+      `Changing the number of nozzle positions, or the share on the top half, also changes what sizes the split asks for.`,
+    ].filter(Boolean),
+  };
+}
+
+function fmtRate(value) {
+  return Number.isFinite(value) ? String(Math.round(value * 10) / 10) : '?';
+}
+
+/*
+ * Cone tips run from 30 all the way to 300 PSI, but running at the top of that
+ * range to hit a rate is the wrong answer: it makes the spray finer, wears
+ * everything faster and loads the pump, when fitting a larger orifice at
+ * moderate pressure gives the same output. So moderate pressure scores full
+ * marks and the top of the range is discouraged. TeeJet notes the plain cone
+ * tips are suited to work at 40 PSI and up, which sets the soft floor.
+ */
+export function airblastPressureScore(psi, tip) {
+  const floor = Math.max(tip.psiMin, 40);
+  const comfortable = 150;
+  if (psi < floor) return 0;
+  if (psi <= comfortable) return 15;
+  const span = tip.psiMax - comfortable || 1;
+  return Math.max(0, 15 * (1 - (psi - comfortable) / span));
+}
+
+/*
+ * What this machine can physically deliver at this speed and row spacing: the
+ * smallest tip in the family at its lowest pressure, up to the largest at its
+ * highest. Used to explain an out of reach target instead of quietly returning
+ * a tip set that is a long way off rate.
+ */
+export function airblastCapacity({ seriesTips, positionCount, sides, mph, rowSpacingFeet }) {
+  const psiFloor = Math.max(...seriesTips.map((tip) => tip.psiMin));
+  const psiCeiling = Math.min(...seriesTips.map((tip) => tip.psiMax));
+  const smallest = Math.min(...seriesTips.map((tip) => tip.gpm40));
+  const largest = Math.max(...seriesTips.map((tip) => tip.gpm40));
+  const multiplier = sides === 'both' ? 2 : 1;
+
+  const minTotal = positionCount * flowAtPsi(smallest, psiFloor) * multiplier;
+  const maxTotal = positionCount * flowAtPsi(largest, psiCeiling) * multiplier;
+
+  return {
+    psiFloor,
+    psiCeiling,
+    minTotalGpm: minTotal,
+    maxTotalGpm: maxTotal,
+    minGpa: airblastGpa({ gpm: minTotal, mph, rowSpacingFeet, sides }),
+    maxGpa: airblastGpa({ gpm: maxTotal, mph, rowSpacingFeet, sides }),
+  };
+}
+
+/*
+ * The class to put on the headline when the positions are not all the same:
+ * whichever class covers the most positions, with the coarsest winning a tie.
+ * The range is reported alongside it so a mixed manifold is not hidden.
+ */
+function dominantDroplet(positions) {
+  const counts = new Map();
+  for (const position of positions) {
+    counts.set(position.dropletClass, (counts.get(position.dropletClass) || 0) + 1);
+  }
+  let best = positions[0].dropletClass;
+  for (const [droplet, count] of counts) {
+    const bestCount = counts.get(best);
+    if (count > bestCount || (count === bestCount && dropletIndex(droplet) > dropletIndex(best))) {
+      best = droplet;
+    }
+  }
+  const indexes = positions.map((position) => dropletIndex(position.dropletClass));
+  const low = DROPLET_CLASSES[Math.min(...indexes)];
+  const high = DROPLET_CLASSES[Math.max(...indexes)];
+  return {
+    droplet: best,
+    fromPsi: positions.find((position) => position.dropletClass === best)?.dropletFromPsi ?? null,
+    range: low === high ? null : { from: low, to: high },
   };
 }
 
@@ -547,13 +777,35 @@ function airblastPressureSteps(seriesTips, input) {
   return steps;
 }
 
-function airblastWarnings({ picks, psi, droplet, input, application, rateError }) {
+function airblastWarnings({
+  picks,
+  positions,
+  psi,
+  input,
+  application,
+  rateError,
+  deliveredTotal,
+  sides,
+}) {
   const warnings = [];
 
-  if (Math.abs(rateError) > 0.05) {
+  if (Math.abs(rateError) > 0.02) {
+    const trimSpeed = airblastTrimSpeed({
+      gpm: deliveredTotal,
+      gpa: input.gpa,
+      rowSpacingFeet: input.rowSpacingFeet,
+      sides,
+    });
+    warnings.push({
+      level: Math.abs(rateError) > 0.05 ? 'warn' : 'info',
+      text: `This set delivers ${Math.abs(rateError * 100).toFixed(1)}% ${rateError > 0 ? 'more' : 'less'} than the target rate, because tips only come in fixed sizes. Run ${trimSpeed.toFixed(1)} mph instead of ${input.mph} mph and you are exactly on rate.`,
+    });
+  }
+
+  if (psi > 200) {
     warnings.push({
       level: 'warn',
-      text: `This tip set delivers ${(rateError * 100).toFixed(1)}% ${rateError > 0 ? 'more' : 'less'} than the target rate. Adjust ground speed to trim the difference, or try a different pressure.`,
+      text: `${psi} PSI is near the top of what these tips are rated for. It works, but it makes the spray finer and wears tips and pump faster. Adding nozzle positions or fitting larger nozzles would let you carry the same rate at a far lower pressure.`,
     });
   }
 
@@ -572,10 +824,19 @@ function airblastWarnings({ picks, psi, droplet, input, application, rateError }
     });
   }
 
-  if (!droplet.exact) {
+  const inexact = positions.find((position) => !position.dropletExact);
+  if (inexact) {
     warnings.push({
       level: 'info',
-      text: `Droplet class ${droplet.droplet} is the published value at ${droplet.fromPsi} PSI, the nearest step to ${psi} PSI.`,
+      text: `TeeJet publishes droplet classes at set pressures. The classes shown are the published values at ${inexact.dropletFromPsi} PSI, the nearest charted step to ${psi} PSI.`,
+    });
+  }
+
+  const classes = new Set(positions.map((position) => position.dropletClass));
+  if (classes.size > 1) {
+    warnings.push({
+      level: 'info',
+      text: `The positions do not all spray the same droplet size, because they carry different capacities at one common pressure. Per position classes are in the table.`,
     });
   }
 

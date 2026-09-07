@@ -377,6 +377,111 @@ test('air induction cone tips are never recommended below sixty PSI', () => {
   }
 });
 
+test('air blast positions are classified individually, not from one tip', () => {
+  const output = recommendAirblast({
+    sprayerType: 'airblast',
+    applicationId: 'airblast_lowdrift',
+    gpa: 60,
+    mph: 3,
+    rowSpacingFeet: 10,
+    sides: 'both',
+    positionsPerSide: 4,
+  });
+  const top = output.results[0];
+  for (const position of top.positions) {
+    assert.ok(position.dropletClass, `position ${position.position} has no droplet class`);
+  }
+  /* Positions carry different capacities, so the headline class has to be one
+   * that a position actually sprays. */
+  assert.ok(
+    top.positions.some((position) => position.dropletClass === top.dropletClass),
+    'headline droplet class belongs to one of the positions',
+  );
+});
+
+test('air blast will not reach for maximum pressure when a moderate one is on rate', () => {
+  /* This setup is comfortably inside the flow envelope, so there is no excuse
+   * for recommending the top of the pressure range. */
+  const output = recommendAirblast({
+    sprayerType: 'airblast',
+    applicationId: 'airblast_fungicide',
+    gpa: 60,
+    mph: 2.5,
+    rowSpacingFeet: 12,
+    sides: 'both',
+    positionsPerSide: 6,
+  });
+  assert.ok(output.onRateCount > 0, 'found tip sets on rate');
+  assert.ok(
+    output.results[0].psi <= 200,
+    `top pick was ${output.results[0].psi} PSI, which is reaching for the top of the range`,
+  );
+});
+
+test('a rate the machine cannot flow is diagnosed rather than answered', () => {
+  const output = recommendAirblast({
+    sprayerType: 'airblast',
+    applicationId: 'airblast_foliar',
+    gpa: 200,
+    mph: 2,
+    rowSpacingFeet: 22,
+    sides: 'both',
+    positionsPerSide: 6,
+  });
+  assert.equal(output.onRateCount, 0);
+  assert.ok(output.unreachable, 'reports that the target is out of reach');
+  assert.equal(output.unreachable.direction, 'over');
+  assert.ok(output.unreachable.speedLimit < 2, 'tells the operator to slow down');
+  assert.ok(output.unreachable.advice.length >= 3);
+});
+
+test('a rate below what the tips will pass is diagnosed the other way', () => {
+  const output = recommendAirblast({
+    sprayerType: 'airblast',
+    applicationId: 'airblast_fungicide',
+    gpa: 5,
+    mph: 4,
+    rowSpacingFeet: 8,
+    sides: 'both',
+    positionsPerSide: 8,
+  });
+  assert.equal(output.unreachable?.direction, 'under');
+  assert.ok(output.unreachable.speedLimit > 4, 'tells the operator to speed up');
+});
+
+test('when nothing is on rate the closest tip set is ranked first', () => {
+  const output = recommendAirblast({
+    sprayerType: 'airblast',
+    applicationId: 'airblast_insecticide',
+    gpa: 75,
+    mph: 1.7,
+    rowSpacingFeet: 60,
+    sides: 'one',
+    positionsPerSide: 8,
+  });
+  assert.equal(output.onRateCount, 0);
+  assert.equal(output.unreachable.direction, 'fixed sizes');
+
+  const errors = output.results.map((result) => Math.abs(result.rateErrorPercent));
+  assert.deepEqual(errors, [...errors].sort((a, b) => a - b), 'ordered by how close to rate');
+
+  /* The fix for fixed tip sizes is ground speed, so the advice has to include
+   * the speed that lands the closest set exactly on rate. */
+  const trim = output.unreachable.trimSpeed;
+  assert.ok(Number.isFinite(trim) && trim > 0, 'gives a trim speed');
+  close(
+    airblastGpa({
+      gpm: output.results[0].deliveredTotalGpm,
+      mph: trim,
+      rowSpacingFeet: 60,
+      sides: 'one',
+    }),
+    75,
+    0.01,
+    'the trim speed really does deliver the target rate',
+  );
+});
+
 test('published droplet classes are read straight from the TeeJet grid', () => {
   const find = (partNo) => TIPS.find((tip) => tip.partNo === partNo);
 
