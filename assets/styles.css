@@ -241,10 +241,12 @@ main {
 
 /* ---------------- choice cards ---------------- */
 
-.choice-grid {
-  display: grid;
-  gap: 0.7rem;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+.choice-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.choice-grid.compact .choice {
+  padding: 0.7rem 0.85rem;
 }
 
 .choice {

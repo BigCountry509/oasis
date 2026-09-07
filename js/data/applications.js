@@ -192,9 +192,9 @@ export const APPLICATIONS = [
   },
   {
     id: 'band',
-    name: 'Band spray / directed row application',
+    name: 'Band / strip spray',
     sprayerType: 'boom',
-    blurb: 'Rate is applied over the band width, not the whole acre.',
+    blurb: 'Orchard weed strips and directed rows: you only spray a small strip, not the whole row.',
     idealMin: 'M',
     idealMax: 'C',
     acceptMin: 'F',
@@ -204,9 +204,10 @@ export const APPLICATIONS = [
     gpaTypical: [10, 20],
     preferSeries: ['tt', 'aixr', 'xr'],
     guidance: [
-      'Enter the band width instead of the tip spacing. The tool then works out flow for the band only.',
-      'Banding cuts product use in proportion to band width over row width, so a 10 inch band on 30 inch rows uses about a third of the broadcast rate.',
-      'Even flat fan tips are used for bands so the pattern edge stays sharp. Set boom height so the pattern lands exactly on the band.',
+      'Pick “Strip / band only” under the settings. Application width is how wide that strip is. Row width is the full tree or crop row.',
+      'GPA is gallons on the strip you spray, not the whole orchard acre. The result tells you how much of the acre is actually treated.',
+      'Tip spacing is still how far apart the nozzles are on the boom. The tool counts the tips from the strip width and the spacing, so you do not count them yourself.',
+      'Even flat fan tips keep a sharp pattern edge on a band. Set boom height so the spray lands on the strip and not in the row middle.',
     ],
   },
   {

@@ -87,6 +87,7 @@ function message(node, text, isError = false) {
 const state = {
   sprayerType: 'boom',
   applicationId: 'post_systemic',
+  boomCoverage: 'broadcast',
   output: null,
   draft: null,
   records: [],
@@ -187,7 +188,16 @@ function selectSprayer(id) {
 
 function selectJob(id) {
   state.applicationId = id;
+  if (id === 'band') state.boomCoverage = 'band';
   renderJobChoices();
+  syncBoomCoverage();
+  applyJobDefaults();
+}
+
+function selectCoverage(id) {
+  state.boomCoverage = id === 'band' ? 'band' : 'broadcast';
+  renderCoverageChoices();
+  syncBoomCoverage();
   applyJobDefaults();
 }
 
@@ -210,18 +220,41 @@ function applyJobDefaults() {
       ? 'Air blast passes are normally 2 to 3 mph. Faster than that and the air stream cannot clear the canopy.'
       : 'Field speed for this pass.';
 
-  /* Band spraying meters over the band, not the tip spacing. */
-  const isBand = job.id === 'band';
-  $('#spacing-label').textContent = isBand ? 'Band width' : 'Tip spacing';
-  $('#spacing-hint').textContent = isBand
-    ? 'The width of the treated band under one tip. The rate you entered is applied over this band.'
-    : '15 and 20 inch are the common boom spacings.';
-
   const spacing = $('#spacing');
-  if (!spacing.value) spacing.value = isBand ? 10 : 20;
+  if (!spacing.value) spacing.value = 20;
+  $('#spacing-label').textContent = 'Tip spacing';
+  $('#spacing-hint').textContent = 'How far apart the tips are on the boom. 15 and 20 inch are the common spacings.';
+
+  const appWidth = $('#app-width');
+  if (state.sprayerType === 'boom') {
+    const current = Number.parseFloat(appWidth.value);
+    if (!appWidth.value) {
+      appWidth.value = state.boomCoverage === 'band' ? 4 : 40;
+    } else if (state.boomCoverage === 'band' && current === 40) {
+      appWidth.value = 4;
+    } else if (state.boomCoverage !== 'band' && current === 4) {
+      appWidth.value = 40;
+    }
+  }
+  const rowWidth = $('#row-width');
+  if (state.sprayerType === 'boom' && state.boomCoverage === 'band' && !rowWidth.value) {
+    rowWidth.value = 18;
+  }
 
   const rowSpacing = $('#row-spacing');
   if (state.sprayerType === 'airblast' && !rowSpacing.value) rowSpacing.value = 20;
+
+  if (state.sprayerType === 'boom' && state.boomCoverage === 'band') {
+    $('#gpa-hint').textContent =
+      `GPA is gallons on the strip you spray, not the whole orchard acre. This job usually runs ${job.gpaTypical[0]} to ${job.gpaTypical[1]} GPA on that strip.`;
+    $('#app-width-label').textContent = 'Strip width';
+    $('#app-width-hint').textContent =
+      'How wide the spray is on the ground. In an orchard weed strip this is often 3 to 6 feet, not the whole row.';
+  } else if (state.sprayerType === 'boom') {
+    $('#app-width-label').textContent = 'Application width';
+    $('#app-width-hint').textContent =
+      'How wide the boom is spraying. Tip count comes from this and the tip spacing. You do not count nozzles yourself.';
+  }
 }
 
 function syncFormForSprayer() {
@@ -232,7 +265,48 @@ function syncFormForSprayer() {
   $$('.airblast-only').forEach((node) => {
     node.hidden = !isAirblast;
   });
+  renderCoverageChoices();
+  syncBoomCoverage();
   renderSeriesFilter();
+}
+
+function syncBoomCoverage() {
+  const isBand = state.sprayerType === 'boom' && state.boomCoverage === 'band';
+  const rowWidth = $('#row-width-field');
+  if (rowWidth) rowWidth.hidden = !isBand;
+}
+
+function renderCoverageChoices() {
+  const container = $('#coverage-choices');
+  if (!container) return;
+  const options = [
+    {
+      id: 'broadcast',
+      title: 'The whole boom width',
+      sub: 'A normal field pass. Every acre you drive over gets sprayed.',
+    },
+    {
+      id: 'band',
+      title: 'Strip / band only',
+      sub: 'Orchard weed strips and directed rows. You only spray a small strip, not the whole row.',
+    },
+  ];
+  container.replaceChildren(
+    ...options.map((option) =>
+      el(
+        'button',
+        {
+          type: 'button',
+          class: 'choice',
+          role: 'radio',
+          'aria-checked': String(state.boomCoverage === option.id),
+          onClick: () => selectCoverage(option.id),
+        },
+        el('span', { class: 'choice-title', text: option.title }),
+        el('span', { class: 'choice-sub', text: option.sub }),
+      ),
+    ),
+  );
 }
 
 function renderSeriesFilter() {
@@ -258,7 +332,6 @@ function renderSeriesFilter() {
 /* ---------------- reading the form ---------------- */
 
 function readForm() {
-  const job = getApplication(state.applicationId);
   const seriesFilter = $$('#series-filter input:checked').map((input) => input.value);
 
   const input = {
@@ -280,6 +353,9 @@ function readForm() {
   } else {
     input.spacingInches = num($('#spacing'));
     input.tipsPerRow = 1;
+    input.coverage = state.boomCoverage === 'band' ? 'band' : 'broadcast';
+    input.applicationWidthFeet = num($('#app-width'));
+    if (input.coverage === 'band') input.rowWidthFeet = num($('#row-width'));
   }
 
   const problems = [];
@@ -289,8 +365,28 @@ function readForm() {
     if (!Number.isFinite(input.rowSpacingFeet) || input.rowSpacingFeet <= 0) {
       problems.push('Enter the row spacing in feet.');
     }
-  } else if (!Number.isFinite(input.spacingInches) || input.spacingInches <= 0) {
-    problems.push(job?.id === 'band' ? 'Enter the band width.' : 'Enter the tip spacing.');
+  } else {
+    if (!Number.isFinite(input.spacingInches) || input.spacingInches <= 0) {
+      problems.push('Enter the tip spacing.');
+    }
+    if (!Number.isFinite(input.applicationWidthFeet) || input.applicationWidthFeet <= 0) {
+      problems.push(
+        input.coverage === 'band'
+          ? 'Enter how wide the strip is that you are spraying.'
+          : 'Enter the application width of the boom.',
+      );
+    }
+    if (input.coverage === 'band' && (!Number.isFinite(input.rowWidthFeet) || input.rowWidthFeet <= 0)) {
+      problems.push('Enter the full row width so the tool can tell how much of the acre is sprayed.');
+    }
+    if (
+      input.coverage === 'band' &&
+      Number.isFinite(input.applicationWidthFeet) &&
+      Number.isFinite(input.rowWidthFeet) &&
+      input.applicationWidthFeet > input.rowWidthFeet
+    ) {
+      problems.push('The strip cannot be wider than the row.');
+    }
   }
 
   return { input, problems };
@@ -401,14 +497,30 @@ function renderResults(output) {
   container.hidden = false;
 
   const heavy = output.mode === 'boom' && output.density !== 1;
-  const summary =
-    output.mode === 'boom'
-      ? `Each tip has to flow ${fmtFixed(output.solutionGpm, 3)} GPM of solution${
-          heavy
-            ? `, and because this load is heavier than water that is ${fmtFixed(output.requiredGpm, 3)} GPM on the water charts the tips are rated on`
-            : ` (${fmt(output.requiredOzPerMin)} oz per minute in a catch test)`
-        }. ${output.allConsidered} tips in the catalog can hit that rate inside their own pressure range.`
-      : `The machine has to put out ${fmtFixed(output.requiredTotalGpm, 2)} GPM in total, which is ${fmtFixed(output.requiredPerSideGpm, 2)} GPM per side across ${output.positionsPerSide} positions.`;
+  const layout = output.layout;
+  let summary;
+  if (output.mode === 'boom') {
+    summary = `Each tip has to flow ${fmtFixed(output.solutionGpm, 3)} GPM of solution${
+      heavy
+        ? `, and because this load is heavier than water that is ${fmtFixed(output.requiredGpm, 3)} GPM on the water charts the tips are rated on`
+        : ` (${fmt(output.requiredOzPerMin)} oz per minute in a catch test)`
+    }.`;
+    if (layout?.tipCount) {
+      summary +=
+        layout.coverage === 'band'
+          ? ` Fit ${layout.tipCount} of those tips across the ${fmt(layout.applicationWidthFeet)} ft strip.`
+          : ` Fit ${layout.tipCount} of those tips on a ${fmt(layout.applicationWidthFeet)} ft boom at ${fmt(layout.spacingInches)} inch spacing.`;
+      if (Number.isFinite(layout.totalGpm)) {
+        summary += ` Whole boom flow is ${fmtFixed(layout.totalGpm, 2)} GPM.`;
+      }
+    }
+    if (layout?.coverage === 'band' && layout.treatedFraction < 1) {
+      summary += ` You are spraying ${fmt(layout.applicationWidthFeet)} ft of an ${fmt(layout.rowWidthFeet)} ft row, so about ${Math.round(layout.treatedFraction * 100)}% of the acre is treated. ${fmt(state.lastInput?.gpa)} GPA on the strip is ${fmt(layout.gpaFieldAcre)} gallons per orchard acre.`;
+    }
+    summary += ` ${output.allConsidered} tips in the catalog can hit that rate inside their own pressure range.`;
+  } else {
+    summary = `The machine has to put out ${fmtFixed(output.requiredTotalGpm, 2)} GPM in total, which is ${fmtFixed(output.requiredPerSideGpm, 2)} GPM per side across ${output.positionsPerSide} positions.`;
+  }
   $('#results-summary').textContent =
     output.mode === 'airblast' && output.unreachable
       ? `${summary} Nothing in the catalog lands within 10% of that, so what follows is the closest it can get.`
@@ -496,14 +608,35 @@ function renderBoomResult(result, index, output) {
       dropletBadge(result.dropletClass, result.dropletExact, result.dropletFromPsi, tip.pattern),
     ),
 
-    readout([
-      ['Set pressure', `${result.setPsi} PSI`, `solved: ${fmt(result.psi)} PSI`],
-      ['Flow per tip', `${fmtFixed(result.gpmAtSetPsi, 3)} GPM`, `${fmt(result.ozPerMinAtSetPsi)} oz/min in a jug of water`],
-      ['Rate delivered', `${fmt(result.gpaAtSetPsi)} GPA`, `target ${fmt(state.lastInput?.gpa)} GPA`],
-      result.dropletClass
-        ? ['Droplet class', result.dropletClass, DROPLET_NAMES[result.dropletClass]]
-        : ['Pattern', `${tip.streams} streams`, 'no droplets to classify'],
-    ]),
+    readout(
+      [
+        ['Set pressure', `${result.setPsi} PSI`, `solved: ${fmt(result.psi)} PSI`],
+        ['Flow per tip', `${fmtFixed(result.gpmAtSetPsi, 3)} GPM`, `${fmt(result.ozPerMinAtSetPsi)} oz/min in a jug of water`],
+        output.layout?.tipCount
+          ? [
+              output.layout.coverage === 'band' ? 'Tips on the strip' : 'Tips on the boom',
+              String(output.layout.tipCount),
+              output.layout.coverage === 'band'
+                ? `${fmt(output.layout.applicationWidthFeet)} ft strip at ${fmt(output.layout.spacingInches)} in spacing`
+                : `${fmt(output.layout.applicationWidthFeet)} ft boom at ${fmt(output.layout.spacingInches)} in spacing`,
+            ]
+          : null,
+        Number.isFinite(output.layout?.totalGpm)
+          ? ['Whole boom flow', `${fmtFixed(output.layout.totalGpm, 2)} GPM`, 'every tip at this pressure']
+          : null,
+        ['Rate delivered', `${fmt(result.gpaAtSetPsi)} GPA`, `target ${fmt(state.lastInput?.gpa)} GPA`],
+        output.layout?.coverage === 'band' && output.layout.treatedFraction < 1
+          ? [
+              'Orchard acre rate',
+              `${fmt(output.layout.gpaFieldAcre)} GPA`,
+              `${Math.round(output.layout.treatedFraction * 100)}% of the row is sprayed`,
+            ]
+          : null,
+        result.dropletClass
+          ? ['Droplet class', result.dropletClass, DROPLET_NAMES[result.dropletClass]]
+          : ['Pattern', `${tip.streams} streams`, 'no droplets to classify'],
+      ].filter(Boolean),
+    ),
 
     pressureWindowBar(tip, result.psi),
 
@@ -748,6 +881,9 @@ function buildDraftFromBoom(result) {
     mph: round(state.lastInput.mph, 2),
     psi: result.setPsi,
     spacingInches: round(state.lastInput.spacingInches, 2),
+    rowSpacingFeet: Number.isFinite(state.lastInput.rowWidthFeet)
+      ? round(state.lastInput.rowWidthFeet, 2)
+      : null,
     windMph: Number.isFinite(state.lastInput.windMph) ? state.lastInput.windMph : null,
     dropletClass: result.dropletClass,
     nozzles: [
@@ -767,6 +903,11 @@ function buildDraftFromBoom(result) {
       tipsPerRow: state.lastInput.tipsPerRow,
       solvedPsi: round(result.psi, 1),
       dropletFromPsi: result.dropletFromPsi,
+      coverage: state.lastInput.coverage,
+      applicationWidthFeet: Number.isFinite(state.lastInput.applicationWidthFeet)
+        ? round(state.lastInput.applicationWidthFeet, 2)
+        : null,
+      tipCount: state.output?.layout?.tipCount ?? null,
     },
   };
 }
@@ -1052,7 +1193,19 @@ function renderRecord(record) {
   if (record.crop) details.push(['Crop', record.crop]);
   if (record.applicationName) details.push(['Job type', record.applicationName]);
   if (record.spacingInches) details.push(['Tip spacing', `${fmt(record.spacingInches)} in`]);
-  if (record.rowSpacingFeet) details.push(['Row spacing', `${fmt(record.rowSpacingFeet)} ft`]);
+  if (record.calc?.applicationWidthFeet) {
+    details.push([
+      record.calc.coverage === 'band' ? 'Strip width' : 'Application width',
+      `${fmt(record.calc.applicationWidthFeet)} ft`,
+    ]);
+  }
+  if (record.rowSpacingFeet) {
+    details.push([
+      record.sprayerType === 'boom' ? 'Row width' : 'Row spacing',
+      `${fmt(record.rowSpacingFeet)} ft`,
+    ]);
+  }
+  if (record.calc?.tipCount) details.push(['Tips fitted', String(record.calc.tipCount)]);
   if (record.products?.length) {
     details.push([
       'Products',
@@ -1671,6 +1824,8 @@ const URL_FIELDS = [
   ['mph', '#mph'],
   ['spacing', '#spacing'],
   ['row', '#row-spacing'],
+  ['width', '#app-width'],
+  ['roww', '#row-width'],
   ['pos', '#positions'],
   ['wind', '#wind'],
   ['psimin', '#psi-min'],
@@ -1687,6 +1842,8 @@ function readUrlState(params) {
   if (sprayer && SPRAYER_TYPES[sprayer]) state.sprayerType = sprayer;
   const job = params.get('job');
   if (job && getApplication(job)) state.applicationId = job;
+  const cover = params.get('cover');
+  if (cover === 'band' || cover === 'broadcast') state.boomCoverage = cover;
 }
 
 function applyUrlValues(params) {
@@ -1717,8 +1874,11 @@ function applyUrlValues(params) {
 function saveSprayerProfile() {
   const profile = {
     sprayerType: state.sprayerType,
+    boomCoverage: state.boomCoverage,
     spacing: $('#spacing').value,
     rowSpacing: $('#row-spacing').value,
+    appWidth: $('#app-width').value,
+    rowWidth: $('#row-width').value,
     sides: $('#sides').value,
     positions: $('#positions').value,
     psiMin: $('#psi-min').value,
@@ -1734,6 +1894,9 @@ function readProfileState(profile) {
   if (profile?.sprayerType && SPRAYER_TYPES[profile.sprayerType]) {
     state.sprayerType = profile.sprayerType;
   }
+  if (profile?.boomCoverage === 'band' || profile?.boomCoverage === 'broadcast') {
+    state.boomCoverage = profile.boomCoverage;
+  }
 }
 
 function applyProfileValues(profile) {
@@ -1743,6 +1906,8 @@ function applyProfileValues(profile) {
   };
   assign('#spacing', profile.spacing);
   assign('#row-spacing', profile.rowSpacing);
+  assign('#app-width', profile.appWidth);
+  assign('#row-width', profile.rowWidth);
   assign('#sides', profile.sides);
   assign('#positions', profile.positions);
   assign('#psi-min', profile.psiMin);

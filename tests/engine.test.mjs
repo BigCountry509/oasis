@@ -13,6 +13,7 @@ import {
   boomFlowPerTip,
   boomGpa,
   boomSpeed,
+  boomLayout,
   airblastTotalFlow,
   airblastGpa,
   canopyWeights,
@@ -87,6 +88,33 @@ test('band spraying uses the band width in place of tip spacing', () => {
   const broadcast = boomFlowPerTip({ gpa: 15, mph: 6, spacingInches: 30 });
   const banded = boomFlowPerTip({ gpa: 15, mph: 6, spacingInches: 10 });
   close(banded, broadcast / 3, 1e-9, 'band flow');
+});
+
+test('boom tip count comes from application width and spacing', () => {
+  const layout = boomLayout({
+    spacingInches: 20,
+    applicationWidthFeet: 40,
+    gpmPerTip: 0.4,
+    gpa: 15,
+  });
+  assert.equal(layout.tipCount, 24);
+  close(layout.totalGpm, 9.6, 1e-9, 'whole boom flow');
+  assert.equal(layout.coverage, 'broadcast');
+  assert.equal(layout.treatedFraction, 1);
+});
+
+test('a boom strip spray is only the treated share of the row', () => {
+  const layout = boomLayout({
+    spacingInches: 20,
+    applicationWidthFeet: 5,
+    coverage: 'band',
+    rowWidthFeet: 18,
+    gpmPerTip: 0.3,
+    gpa: 15,
+  });
+  assert.equal(layout.tipCount, 3);
+  close(layout.treatedFraction, 5 / 18, 1e-9, 'treated fraction');
+  close(layout.gpaFieldAcre, 15 * (5 / 18), 1e-9, 'gallons per orchard acre');
 });
 
 test('directed applications divide flow between the tips on a row', () => {

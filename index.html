@@ -94,7 +94,30 @@
                     <input type="number" id="spacing" name="spacing" min="2" max="120" step="0.5" inputmode="decimal" />
                     <span class="unit">in</span>
                   </span>
-                  <span class="field-hint" id="spacing-hint">15 and 20 inch are the common boom spacings.</span>
+                  <span class="field-hint" id="spacing-hint">How far apart the tips are on the boom. 15 and 20 inch are the common spacings.</span>
+                </label>
+
+                <div class="field boom-only span-2" id="coverage-field">
+                  <span class="field-label">How much of the ground are you spraying?</span>
+                  <div class="choice-grid compact" id="coverage-choices" role="radiogroup" aria-label="Boom coverage"></div>
+                </div>
+
+                <label class="field boom-only" id="app-width-field">
+                  <span class="field-label" id="app-width-label">Application width</span>
+                  <span class="input-wrap">
+                    <input type="number" id="app-width" name="applicationWidthFeet" min="0.5" max="200" step="0.5" inputmode="decimal" />
+                    <span class="unit">ft</span>
+                  </span>
+                  <span class="field-hint" id="app-width-hint">How wide the boom is spraying. Tip count comes from this and the tip spacing. You do not count nozzles yourself.</span>
+                </label>
+
+                <label class="field boom-only" id="row-width-field" hidden>
+                  <span class="field-label">Row width</span>
+                  <span class="input-wrap">
+                    <input type="number" id="row-width" name="rowWidthFeet" min="1" max="80" step="0.5" inputmode="decimal" />
+                    <span class="unit">ft</span>
+                  </span>
+                  <span class="field-hint">Centre to centre between rows. The unsprayed middle of the row is skipped.</span>
                 </label>
 
                 <!-- airblast only -->
@@ -295,7 +318,10 @@
             <div>
               <h4>Boom sprayer</h4>
               <p class="formula">GPM per tip = (GPA &times; MPH &times; tip spacing in inches) &divide; 5940</p>
-              <p class="muted">For a band, put the band width in place of the tip spacing.</p>
+              <p class="muted">
+                How many tips you need is application width in feet &times; 12, divided by the tip spacing.
+                For a strip or band, application width is only the strip you spray, not the whole row.
+              </p>
             </div>
             <div>
               <h4>Air blast sprayer</h4>

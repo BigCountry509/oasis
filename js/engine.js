@@ -44,6 +44,47 @@ export function boomSpeed({ gpm, gpa, spacingInches, tipsPerRow = 1 }) {
   return (BOOM_CONSTANT * gpm * tipsPerRow) / (gpa * spacingInches);
 }
 
+/*
+ * How many tips a boom actually carries, and what that means for a strip spray.
+ * Tip size still comes from spacing. Width only tells you how many of those
+ * tips to fit, so the operator does not count nozzles by hand.
+ *
+ * GPA is gallons on the ground you spray. On a strip that is the treated band,
+ * not the whole orchard acre. treatedFraction is strip width over row width.
+ */
+export function boomLayout({
+  spacingInches,
+  applicationWidthFeet,
+  coverage = 'broadcast',
+  rowWidthFeet,
+  gpmPerTip,
+  gpa,
+}) {
+  const layout = {
+    coverage: coverage === 'band' ? 'band' : 'broadcast',
+    applicationWidthFeet: Number.isFinite(applicationWidthFeet) ? applicationWidthFeet : null,
+    spacingInches: Number.isFinite(spacingInches) ? spacingInches : null,
+    rowWidthFeet: Number.isFinite(rowWidthFeet) ? rowWidthFeet : null,
+    tipCount: null,
+    totalGpm: null,
+    treatedFraction: 1,
+    gpaFieldAcre: Number.isFinite(gpa) ? gpa : null,
+  };
+  if (layout.applicationWidthFeet > 0 && layout.spacingInches > 0) {
+    layout.tipCount = Math.max(1, Math.round((layout.applicationWidthFeet * 12) / layout.spacingInches));
+    if (Number.isFinite(gpmPerTip)) layout.totalGpm = gpmPerTip * layout.tipCount;
+  }
+  if (
+    layout.coverage === 'band' &&
+    layout.applicationWidthFeet > 0 &&
+    layout.rowWidthFeet > 0
+  ) {
+    layout.treatedFraction = layout.applicationWidthFeet / layout.rowWidthFeet;
+    if (Number.isFinite(gpa)) layout.gpaFieldAcre = gpa * layout.treatedFraction;
+  }
+  return layout;
+}
+
 /* ---------- air blast formulas ---------- */
 
 export function airblastConstant(sides) {
@@ -389,6 +430,14 @@ export function recommendBoom(input) {
 
   const usable = candidates.filter((candidate) => candidate.fit !== 'outside');
   const ranked = usable.length >= 3 ? usable : candidates;
+  const layout = boomLayout({
+    spacingInches,
+    applicationWidthFeet: input.applicationWidthFeet,
+    coverage: input.coverage,
+    rowWidthFeet: input.rowWidthFeet,
+    gpmPerTip: solutionGpm,
+    gpa: input.gpa,
+  });
 
   return {
     mode: 'boom',
@@ -397,6 +446,7 @@ export function recommendBoom(input) {
     requiredOzPerMin: ozPerMinute(requiredGpm),
     solutionGpm,
     density,
+    layout,
     windFloor: windDropletFloor(input.windMph),
     results: ranked.slice(0, 6),
     allConsidered: candidates.length,
