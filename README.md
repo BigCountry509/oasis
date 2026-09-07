@@ -34,7 +34,13 @@ pressure you ran, products with EPA registration numbers and rates, wind, temper
 applicator and license number, and notes. Search it, edit it, and export the whole thing to CSV.
 
 **Tools.** Catch test targets and a tip wear check that tells you when a tip is more than ten per
-cent over its rating and needs replacing, plus tank and acreage math.
+cent over its rating and needs replacing, tank and acreage math, and a browsable catalog of every
+tip with its rating, pressure range and droplet class at each charted pressure.
+
+If a rate and speed cannot be reached at all, the tool says so and says why, rather than showing an
+empty list or a tip that is a long way off rate. It tells you whether you are asking for more flow
+than the tips can pass or less than they will pass at minimum pressure, and gives the ground speed
+that brings the rate back in reach.
 
 It also installs to a phone home screen and works with no signal, which is where it gets used.
 

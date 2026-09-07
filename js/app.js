@@ -1395,6 +1395,63 @@ function runWearTool() {
   output.replaceChildren(readout(items), verdict);
 }
 
+function renderCatalogPicker() {
+  const select = $('#catalog-series');
+  const seriesIds = [...new Set(TIPS.map((tip) => tip.seriesId))];
+  select.replaceChildren(
+    ...seriesIds.map((seriesId) =>
+      el('option', { value: seriesId, text: `${SERIES[seriesId].name} (${SERIES[seriesId].psiMin}-${SERIES[seriesId].psiMax} PSI)` }),
+    ),
+  );
+  select.addEventListener('change', renderCatalog);
+  renderCatalog();
+}
+
+function renderCatalog() {
+  const seriesId = $('#catalog-series').value;
+  const tips = TIPS.filter((tip) => tip.seriesId === seriesId);
+  if (!tips.length) return;
+
+  /* Charted pressures differ between families, so the columns come from the
+   * data rather than being fixed. */
+  const pressures = [...new Set(tips.flatMap((tip) => tip.dropletPsiSteps))].sort((a, b) => a - b);
+
+  $('#catalog-output').replaceChildren(
+    el(
+      'table',
+      {},
+      el(
+        'thead',
+        {},
+        el(
+          'tr',
+          {},
+          el('th', { text: 'Part number' }),
+          el('th', { text: 'GPM at 40' }),
+          ...pressures.map((psi) => el('th', { text: `${psi}` })),
+        ),
+      ),
+      el(
+        'tbody',
+        {},
+        ...tips.map((tip) =>
+          el(
+            'tr',
+            {},
+            el('th', { text: tip.partNo }),
+            el('td', { text: fmtFixed(tip.gpm40, 3) }),
+            ...pressures.map((psi) => el('td', { text: tip.droplets[psi] || '-' })),
+          ),
+        ),
+      ),
+    ),
+    el('p', {
+      class: 'muted',
+      text: `Columns are PSI. Cells are the published droplet class at that pressure, and a dash means that pressure is outside the ${SERIES[seriesId].psiMin} to ${SERIES[seriesId].psiMax} PSI range for this family or the class is not charted.`,
+    }),
+  );
+}
+
 function runTankTool() {
   const result = tankMath({
     tankGallons: num($('#tank-gallons')),
@@ -1600,6 +1657,7 @@ function init() {
   ['#tank-gallons', '#tank-gpa', '#tank-acres', '#tank-rate'].forEach((selector) => {
     $(selector).addEventListener('input', runTankTool);
   });
+  renderCatalogPicker();
 
   $('#storage-note').textContent = store.CLOUD_ENABLED
     ? 'Spray records are stored in your account. Records saved without signal are held on the device and uploaded next time.'
