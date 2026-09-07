@@ -341,6 +341,10 @@ main {
   min-width: 0;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .field.span-2 {
   grid-column: 1 / -1;
 }

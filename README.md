@@ -179,8 +179,9 @@ Boom sprayer, per tip:
 GPM = (GPA x MPH x tip spacing in inches) / 5940
 ```
 
-For band spraying the band width replaces the tip spacing. For directed applications the flow is
-divided by the number of tips on each row.
+How many tips you need is application width in feet times 12, divided by the tip spacing. For a
+strip or band you still use tip spacing for flow; application width is only the strip you spray,
+and row width tells you what share of the acre that is.
 
 Air blast, whole machine:
 
