@@ -495,6 +495,7 @@ function renderBoomResult(result, index, output) {
     pressureWindowBar(tip, result.psi),
 
     el('p', { class: 'result-note', text: tip.summary }),
+    tip.sizeNote ? el('p', { class: 'result-note', text: tip.sizeNote }) : null,
     el('p', {
       class: 'result-note',
       text: `Without changing tips this covers ${rateWindow} at ${fmt(state.lastInput?.mph)} mph, or ${speedWindow} while holding ${fmt(state.lastInput?.gpa)} GPA.`,
@@ -1506,7 +1507,9 @@ function renderCatalog() {
         fmtFixed(tip.gpm40, 3),
         ...pressures.map((psi) => tip.droplets[psi] || '-'),
       ]),
-      note: `Columns are PSI. Cells are the published droplet class at that pressure, and a dash means that pressure is outside the ${series.psiMin} to ${series.psiMax} PSI range for this family or the class is not charted.`,
+      note: `Columns are PSI. Cells are the published droplet class at that pressure, and a dash means that pressure is outside the ${series.psiMin} to ${series.psiMax} PSI range for this family or the class is not charted.${
+        series.sizeNote ? ` ${series.sizeNote}` : ''
+      }`,
     }),
   );
 }

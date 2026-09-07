@@ -29,6 +29,7 @@ import {
 
 import {
   DISC_CORE_SETS,
+  DROPLET_CLASSES,
   TIPS,
   flowAtPsi,
   psiForFlow,
@@ -586,6 +587,85 @@ test('DG and Turbo FloodJet match their published tables', () => {
   assert.equal(dropletAtPsi(tf2, 10).droplet, 'UC');
   assert.equal(dropletAtPsi(tf2, 40).droplet, 'C');
   assert.equal(dropletAtPsi(find('TF-VP5'), 40).droplet, 'VC');
+});
+
+test('the flooding tips carry their whole published droplet table', () => {
+  /* CAT52-US classification appendix, polymer columns, since the catalog stores
+   * the VP part numbers. TeeJet charts these every 5 PSI, and the stainless
+   * column is a different set of numbers that deliberately is not used here. */
+  const published = {
+    'TF-VP2': { 10: 'UC', 15: 'XC', 20: 'XC', 25: 'VC', 30: 'VC', 35: 'VC', 40: 'C' },
+    'TF-VP2.5': { 10: 'UC', 15: 'XC', 20: 'XC', 25: 'VC', 30: 'VC', 35: 'VC', 40: 'C' },
+    'TF-VP3': { 10: 'UC', 15: 'XC', 20: 'XC', 25: 'XC', 30: 'VC', 35: 'VC', 40: 'VC' },
+    'TF-VP4': { 10: 'UC', 15: 'UC', 20: 'UC', 25: 'XC', 30: 'XC', 35: 'VC', 40: 'VC' },
+    'TF-VP10': { 10: 'UC', 15: 'UC', 20: 'UC', 25: 'XC', 30: 'XC', 35: 'VC', 40: 'VC' },
+    'TK-VP1': { 10: 'M', 15: 'M', 20: 'M', 25: 'M', 30: 'M', 35: 'F', 40: 'F' },
+    'TK-VP2': { 10: 'C', 15: 'M', 20: 'M', 25: 'M', 30: 'M', 35: 'M', 40: 'M' },
+    'TK-VP4': { 10: 'C', 15: 'C', 20: 'C', 25: 'M', 30: 'M', 35: 'M', 40: 'M' },
+    'TK-VP7.5': { 10: 'VC', 15: 'VC', 20: 'C', 25: 'C', 30: 'C', 35: 'C', 40: 'M' },
+    'TK-VP10': { 10: 'VC', 15: 'VC', 20: 'VC', 25: 'C', 30: 'C', 35: 'C', 40: 'C' },
+  };
+
+  for (const [partNo, table] of Object.entries(published)) {
+    const tip = TIPS.find((item) => item.partNo === partNo);
+    assert.ok(tip, `${partNo} is in the catalog`);
+    for (const [psi, droplet] of Object.entries(table)) {
+      const read = dropletAtPsi(tip, Number(psi));
+      assert.equal(read.droplet, droplet, `${partNo} at ${psi} PSI`);
+      assert.equal(read.exact, true, `${partNo} charts ${psi} PSI directly`);
+    }
+  }
+});
+
+test('the plain FloodJet is carried as the finer alternative to the Turbo', () => {
+  const tk = TIPS.filter((tip) => tip.seriesId === 'tk');
+  const tf = TIPS.filter((tip) => tip.seriesId === 'tf');
+  assert.ok(tk.length, 'TK is in the catalog');
+
+  /* Both are numbered off 10 PSI, so a shared size has to have a shared rating. */
+  for (const size of ['2', '2.5', '3', '4', '5', '7.5', '10']) {
+    const a = tk.find((tip) => tip.size === size);
+    const b = tf.find((tip) => tip.size === size);
+    assert.ok(a && b, `both families offer a ${size}`);
+    close(a.gpm40, b.gpm40, 1e-9, `TK-${size} and TF-${size} share a rating`);
+    close(tipFlowAtPsi(a, 10), Number(size) / 10, 0.005, `TK-${size} is its number at 10 PSI`);
+  }
+
+  /* The whole reason to carry both: without a pre-orifice the TK is coarser than
+   * a plain fan but never as coarse as the Turbo at the same size and pressure. */
+  for (const size of ['2', '4', '10']) {
+    const coarse = DROPLET_CLASSES.indexOf(
+      dropletAtPsi(tf.find((tip) => tip.size === size), 30).droplet,
+    );
+    const finer = DROPLET_CLASSES.indexOf(
+      dropletAtPsi(tk.find((tip) => tip.size === size), 30).droplet,
+    );
+    assert.ok(finer < coarse, `TK-${size} is finer than TF-${size} at 30 PSI`);
+  }
+
+  /* TeeJet does not chart droplets for the .50, .75, 15, 20 or 30 sizes, and a
+   * tip with no published class has no business in a ranking that scores on it. */
+  for (const size of ['0.50', '.50', '0.75', '.75', '15', '20', '30']) {
+    assert.ok(!tk.some((tip) => tip.size === size), `TK-${size} is left out`);
+  }
+  for (const tip of tk) {
+    assert.ok(tip.dropletPsiSteps.length === 7, `${tip.partNo} has all seven charted pressures`);
+  }
+});
+
+test('a flooding tip explains that its number is a 10 PSI rating', () => {
+  /* Every other family in the catalog is numbered at 40 PSI, so the odd one out
+   * has to say so or it will be ordered a size wrong. */
+  for (const seriesId of ['tf', 'tk']) {
+    const tips = TIPS.filter((tip) => tip.seriesId === seriesId);
+    for (const tip of tips) {
+      assert.match(tip.sizeNote || '', /10 PSI/, `${tip.partNo} carries the numbering note`);
+    }
+  }
+  for (const seriesId of ['xr', 'tti', 'dg']) {
+    const tip = TIPS.find((item) => item.seriesId === seriesId);
+    assert.equal(tip.sizeNote, undefined, `${tip.partNo} needs no numbering note`);
+  }
 });
 
 test('streamer bar flows come straight off the published table', () => {

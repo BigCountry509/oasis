@@ -151,7 +151,8 @@ you under apply by that much all day.
 | Data | Source |
 | --- | --- |
 | Droplet size classes for boom flat fans | TeeJet LI-TJ420, droplet size data to the ISO 25358 standard, 15 inch tip spacing chart |
-| DG TeeJet and Turbo FloodJet droplet classes and capacities | The droplet size and application rate tables on their TeeJet product pages, also ISO 25358 |
+| DG TeeJet droplet classes and capacities | The droplet size and application rate tables on its TeeJet product page, also ISO 25358 |
+| TF Turbo FloodJet and TK FloodJet | TeeJet catalog CAT52-US, capacities from the series pages and droplet classes from the classification appendix |
 | StreamJet SJ3 and SJ7A capacities | TeeJet catalog CAT52-US, fertilizer nozzle section |
 | Boom tip capacities and pressure ranges | TeeJet published capacity charts and recommended pressure ranges per series |
 | Air blast cone tips and disc-core capacity tables | TeeJet catalog CAT52-US, air blast nozzle section |
@@ -161,7 +162,7 @@ you under apply by that much all day.
 Tip families included:
 
 - **Boom flat fans:** XR/XRC, TT, TTJ60, AIXR, AI3070, AITTJ60, AI/AIC, TTI60, TTI, DG
-- **Flooding:** TF Turbo FloodJet
+- **Flooding:** TF Turbo FloodJet and TK FloodJet
 - **Fertilizer streamer bars:** StreamJet SJ3 (three streams) and SJ7A (seven streams)
 - **Air blast and directed cones:** TXA/TXB ConeJet, AITXA/AITXB air induction ConeJet
 - **Air blast disc and core:** D disc with DC25, DC45 and DC56 cores, as a lookup table only
@@ -170,9 +171,16 @@ Droplet classifications are published at set pressures and against a specific st
 revises them. The tool tells you when the droplet class it shows came from the nearest charted
 pressure rather than your exact one.
 
-Two families are handled as exceptions, both for the same reason: the tool only quotes numbers it
+Some families are handled as exceptions, all for the same reason: the tool only quotes numbers it
 can cite.
 
+- **A flooding tip is numbered for its flow at 10 PSI, not the usual 40.** A TF-VP4 is 0.4 GPM at
+  10 PSI and 0.8 GPM at 40, so its rating is twice the number in the part code. Every other family
+  in the catalog is numbered at 40 PSI. The tool stores the 40 PSI figure and says so on screen,
+  because reading a flooding tip as though it were a flat fan puts you a size out.
+- **The TK FloodJet only carries the sizes TeeJet charts droplets for**, which is TK-1 through
+  TK-10. The .50, .75, 15, 20 and 30 sizes exist but have no published classification, and the
+  ranking scores on that classification, so they are left out rather than guessed at.
 - **Streamer bars have no droplet class**, because a solid stream has no droplet spectrum to
   classify. They are offered for fertilizer jobs only and never for anything that has to hit a leaf.
   Their published capacities also do not follow the square root law, so the printed table is stored

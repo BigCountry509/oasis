@@ -4,8 +4,13 @@
  * Data sources (all TeeJet published literature):
  *   - Droplet size grid for boom flat fans: TeeJet LI-TJ420, "Droplet Size Data
  *     Based on ISO 25358 Standard", 15" tip spacing tank sticker (2022).
- *   - DG TeeJet and Turbo FloodJet: the droplet size and application rate tables
- *     on their TeeJet product pages, also ISO 25358.
+ *   - DG TeeJet: the droplet size and application rate tables on its TeeJet
+ *     product page, also ISO 25358.
+ *   - Turbo FloodJet TF and FloodJet TK: TeeJet CAT52-US, capacities from the
+ *     series pages and droplet classes from the classification appendix. Note
+ *     that TeeJet has two live revisions of the TF droplet data on its site; the
+ *     current CAT52-US figures are the ones stored here, which differ from the
+ *     older standalone broadcast section in a few cells.
  *   - StreamJet SJ3 and SJ7A: TeeJet CAT52-US section 07, "Fertilizer Nozzles".
  *   - Air blast / directed cone tips and the disc-core reference tables:
  *     TeeJet CAT52-US section 06, "Air Blast Nozzles".
@@ -17,9 +22,12 @@
  *   2. Flow scales with the square root of pressure, so flow at any pressure is
  *      derived rather than stored. Four times the pressure gives twice the flow.
  *
- * The streamer bars are the exception to the second rule: TeeJet's published
- * capacities for them do not follow the square root law, so those tips carry
- * their printed flow table and are interpolated inside it instead.
+ * Both rules have an exception, and both are easy to get wrong:
+ *   - Flooding tips (TF and TK) are numbered for their flow at 10 PSI, not 40. A
+ *     TF-VP4 is 0.4 GPM at 10 PSI and 0.8 GPM at 40. The gpm40 stored below is
+ *     the 40 PSI figure, so it is twice the number in the part code.
+ *   - The streamer bars do not follow the square root law, so those tips carry
+ *     their printed flow table and are interpolated inside it instead.
  */
 
 export const DROPLET_CLASSES = ['XF', 'VF', 'F', 'M', 'C', 'VC', 'XC', 'UC'];
@@ -313,19 +321,69 @@ const FAN_SERIES_META = {
     driftClass: 'high',
     airInduction: false,
     preOrifice: true,
-    sprayAngle: '130 degree wide angle flood',
+    sprayAngle: '120 degree wide angle flood',
     summary:
       'Wide angle flooding tip with a pre-orifice. The traditional fertilizer and soil applied herbicide tip: very coarse to ultra coarse, and a big round orifice that does not plug easily.',
+    sizeNote:
+      'A flooding tip is numbered for its flow at 10 PSI, not the usual 40. A TF-VP4 is 0.4 GPM at 10 PSI and 0.8 GPM at 40.',
     sizes: { '2': 0.4, '2.5': 0.5, '3': 0.6, '4': 0.8, '5': 1.0, '7.5': 1.5, '10': 2.0 },
-    dropletSteps: [10, 20, 30, 40],
+    dropletSteps: [10, 15, 20, 25, 30, 35, 40],
     droplets: {
-      '2': 'UC XC VC C',
-      '2.5': 'UC XC VC C',
-      '3': 'UC XC VC VC',
-      '4': 'UC UC XC VC',
-      '5': 'UC UC XC VC',
-      '7.5': 'UC UC XC VC',
-      '10': 'UC UC XC VC',
+      '2': 'UC XC XC VC VC VC C',
+      '2.5': 'UC XC XC VC VC VC C',
+      '3': 'UC XC XC XC VC VC VC',
+      '4': 'UC UC UC XC XC VC VC',
+      '5': 'UC UC UC XC XC VC VC',
+      '7.5': 'UC UC UC XC XC VC VC',
+      '10': 'UC UC UC XC XC VC VC',
+    },
+  },
+  /*
+   * The original FloodJet, and a much finer tip than the Turbo above: no
+   * pre-orifice, so it runs medium to very coarse where the TF runs very coarse
+   * to ultra coarse. Worth having for a fertilizer pass that still has to give
+   * some coverage, but it is not a drift control tip.
+   *
+   * TeeJet publishes droplet classes for TK-1 through TK-10 only. The .50, .75,
+   * 15, 20 and 30 sizes are left out rather than guessed at, since the ranking
+   * scores on the published class.
+   */
+  tk: {
+    name: 'TK FloodJet',
+    partPattern: 'TK-VP{size}',
+    pattern: 'flood',
+    psiMin: 10,
+    psiMax: 40,
+    driftClass: 'none',
+    airInduction: false,
+    preOrifice: false,
+    sprayAngle: '120 degree wide angle flood',
+    summary:
+      'Plain wide angle flooding tip. The round orifice resists plugging like the Turbo FloodJet, but without the pre-orifice the droplets are far finer, so it drifts more and is the one to reach for when a fertilizer pass still needs coverage.',
+    sizeNote:
+      'A flooding tip is numbered for its flow at 10 PSI, not the usual 40. A TK-VP4 is 0.4 GPM at 10 PSI and 0.8 GPM at 40.',
+    sizes: {
+      '1': 0.2,
+      '1.5': 0.3,
+      '2': 0.4,
+      '2.5': 0.5,
+      '3': 0.6,
+      '4': 0.8,
+      '5': 1.0,
+      '7.5': 1.5,
+      '10': 2.0,
+    },
+    dropletSteps: [10, 15, 20, 25, 30, 35, 40],
+    droplets: {
+      '1': 'M  M  M  M  M  F  F',
+      '1.5': 'M  M  M  M  M  M  F',
+      '2': 'C  M  M  M  M  M  M',
+      '2.5': 'C  M  M  M  M  M  M',
+      '3': 'C  M  M  M  M  M  M',
+      '4': 'C  C  C  M  M  M  M',
+      '5': 'C  C  C  C  M  M  M',
+      '7.5': 'VC VC C  C  C  C  M',
+      '10': 'VC VC VC C  C  C  C',
     },
   },
 };
@@ -542,6 +600,7 @@ function buildFanSeriesTips() {
         preOrifice: meta.preOrifice,
         sprayAngle: meta.sprayAngle,
         summary: meta.summary,
+        sizeNote: meta.sizeNote,
         droplets,
         dropletPsiSteps: Object.keys(droplets).map(Number),
       });
