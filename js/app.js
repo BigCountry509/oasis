@@ -213,12 +213,17 @@ function applyJobDefaults() {
   $('#gpa-hint').textContent = `This job usually runs ${job.gpaTypical[0]} to ${job.gpaTypical[1]} GPA. Below ${job.gpaMin} GPA coverage starts to suffer.`;
 
   const mph = $('#mph');
-  if (!mph.value) {
-    mph.value = state.sprayerType === 'airblast' ? 2.5 : 10;
+  const currentMph = Number.parseFloat(mph.value);
+  if (
+    !mph.value ||
+    (state.sprayerType === 'airblast' && currentMph === 10) ||
+    (state.sprayerType !== 'airblast' && (currentMph === 2.5 || currentMph === 3))
+  ) {
+    mph.value = state.sprayerType === 'airblast' ? 3 : 10;
   }
   $('#mph-hint').textContent =
     state.sprayerType === 'airblast'
-      ? 'Air blast passes are normally 2 to 3 mph. Faster than that and the air stream cannot clear the canopy.'
+      ? 'Air blast passes are normally about 3 mph. Faster than that and the air stream cannot clear the canopy.'
       : 'Field speed for this pass.';
 
   const spacing = $('#spacing');
