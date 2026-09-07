@@ -720,6 +720,20 @@ test('the disc-core reference tables are consistent and kept out of the recommen
   assert.ok(biggestDiscCore > biggestCone * 3, 'disc-core assemblies cover the high volume end');
 });
 
+test('every family lists its sizes smallest first', () => {
+  /* A size like '10' sorts ahead of '015' if the catalog is built straight off
+   * object keys, which is wrong in every list the tip shows up in. */
+  const seriesIds = [...new Set(TIPS.map((tip) => tip.seriesId))];
+  for (const seriesId of seriesIds) {
+    const capacities = TIPS.filter((tip) => tip.seriesId === seriesId).map((tip) => tip.gpm40);
+    assert.deepEqual(
+      capacities,
+      [...capacities].sort((a, b) => a - b),
+      `${seriesId} sizes are out of order`,
+    );
+  }
+});
+
 test('an air induction boom tip is never given a pressure below its own minimum', () => {
   for (const tip of TIPS.filter((item) => item.seriesId === 'ai')) {
     assert.equal(tip.psiMin, 30, 'AI tips start at 30 PSI');

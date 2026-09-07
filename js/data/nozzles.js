@@ -505,11 +505,20 @@ function buildBoomTips() {
   return tips;
 }
 
+/*
+ * Sizes are listed smallest first everywhere they are shown, and a size like
+ * '10' would otherwise sort ahead of '015' because JavaScript reorders keys
+ * that look like integers.
+ */
+function bySize(sizes, capacity) {
+  return Object.entries(sizes).sort((a, b) => capacity(a[1]) - capacity(b[1]));
+}
+
 /* DG and Turbo FloodJet: own capacities, own charted pressures, still droplets. */
 function buildFanSeriesTips() {
   const tips = [];
   for (const [seriesId, meta] of Object.entries(FAN_SERIES_META)) {
-    for (const [size, gpm40] of Object.entries(meta.sizes)) {
+    for (const [size, gpm40] of bySize(meta.sizes, (value) => value)) {
       const classes = parseRow(meta.droplets[size]);
       const droplets = {};
       meta.dropletSteps.forEach((psi, index) => {
@@ -545,7 +554,8 @@ function buildFanSeriesTips() {
 function buildStreamTips() {
   const tips = [];
   for (const [seriesId, meta] of Object.entries(STREAM_SERIES_META)) {
-    for (const [size, flows] of Object.entries(meta.flows)) {
+    const at40 = meta.flowSteps.indexOf(40);
+    for (const [size, flows] of bySize(meta.flows, (value) => value[at40])) {
       const flowTable = { psi: meta.flowSteps, gpm: flows };
       tips.push({
         id: `${seriesId}-${size}`,
@@ -576,7 +586,7 @@ function buildStreamTips() {
 function buildConeTips() {
   const tips = [];
   for (const [seriesId, meta] of Object.entries(CONE_SERIES_META)) {
-    for (const [size, gpm40] of Object.entries(meta.sizes)) {
+    for (const [size, gpm40] of bySize(meta.sizes, (value) => value)) {
       const classes = parseRow(meta.droplets[size]);
       const droplets = {};
       meta.psiSteps.forEach((psi, index) => {
