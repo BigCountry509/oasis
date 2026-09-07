@@ -1678,7 +1678,7 @@ const URL_FIELDS = [
 ];
 
 /*
- * A saved setup or a shared link can change which sprayer is selected, and that
+ * A saved sprayer setup or a URL can change which sprayer is selected, and that
  * changes which fields and which tip families are on screen. So state is read
  * first, the form is rendered once, and only then are the values filled in.
  */
@@ -1712,20 +1712,6 @@ function applyUrlValues(params) {
     });
   }
   return true;
-}
-
-function buildShareUrl() {
-  const params = new URLSearchParams();
-  params.set('sprayer', state.sprayerType);
-  params.set('job', state.applicationId);
-  for (const [key, selector] of URL_FIELDS) {
-    const node = $(selector);
-    if (node && node.value !== '' && !node.closest('[hidden]')) params.set(key, node.value);
-  }
-  if (state.sprayerType === 'airblast') params.set('sides', $('#sides').value);
-  const series = $$('#series-filter input:checked').map((input) => input.value);
-  if (series.length) params.set('series', series.join(','));
-  return `${location.origin}${location.pathname}?${params}`;
 }
 
 function saveSprayerProfile() {
@@ -1811,17 +1797,6 @@ async function init() {
   });
 
   $('#save-profile').addEventListener('click', saveSprayerProfile);
-
-  $('#copy-link').addEventListener('click', async () => {
-    const url = buildShareUrl();
-    try {
-      await navigator.clipboard.writeText(url);
-      message($('#form-message'), 'Link copied. Bookmark it and this setup comes back filled in.');
-    } catch {
-      history.replaceState(null, '', url);
-      message($('#form-message'), 'Link is now in the address bar. Bookmark the page to save this setup.');
-    }
-  });
 
   $$('.tab').forEach((tab) => {
     tab.addEventListener('click', () => switchView(tab.dataset.view));
