@@ -89,6 +89,8 @@ const state = {
   recordFilter: '',
 };
 
+let pendingResetToken = '';
+
 /* ---------------- step 1 and 2: choices ---------------- */
 
 function renderSprayerChoices() {
@@ -969,9 +971,9 @@ function renderScope() {
   const session = store.getSession();
   const node = $('#log-scope');
   const queued = store.outboxCount();
-  if (store.CLOUD_ENABLED) {
+  if (store.accountsAreShared()) {
     node.textContent = session
-      ? `Signed in as ${session.name}. Records sync to your account${queued ? `, ${queued} waiting to upload` : ''}.`
+      ? `Signed in as ${session.name}. Records sync across your devices${queued ? `, ${queued} waiting to upload` : ''}.`
       : 'Sign in to keep your records with your account. Until then they are saved on this device only.';
   } else {
     node.textContent = session
@@ -1141,7 +1143,7 @@ function exportCsv() {
 
 function renderAccountButton() {
   const session = store.getSession();
-  $('#account-label').textContent = session ? session.name : store.CLOUD_ENABLED ? 'Sign in' : 'Accounts';
+  $('#account-label').textContent = session ? session.name : store.accountsAreShared() ? 'Sign in' : 'Accounts';
 }
 
 function openAccountDialog() {
@@ -1153,18 +1155,18 @@ function renderAccountPanel(mode = 'signin') {
   const panel = $('#account-panel');
   const session = store.getSession();
 
-  if (session) {
+  if (session && mode !== 'reset-confirm') {
     panel.replaceChildren(
       el('h3', { text: session.name }),
       el('p', {
         class: 'muted',
-        text: store.CLOUD_ENABLED
-          ? `Signed in as ${session.email}. Your spray records sync to this account.`
+        text: store.accountsAreShared()
+          ? `Signed in as ${session.email}. Your spray records sync to this account on every device. This device stays signed in until you sign out or the password is reset.`
           : session.email
             ? `Signed in as ${session.email}. Your spray records are saved in this browser on this device.`
             : 'Your spray records are saved in this browser on this device.',
       }),
-      store.CLOUD_ENABLED && store.outboxCount()
+      store.accountsAreShared() && store.outboxCount()
         ? el('p', { class: 'muted', text: `${store.outboxCount()} record(s) waiting to upload.` })
         : null,
       el(
@@ -1181,7 +1183,7 @@ function renderAccountPanel(mode = 'signin') {
             await refreshRecords();
           },
         }),
-        !store.CLOUD_ENABLED
+        !store.accountsAreShared()
           ? el('button', {
               type: 'button',
               class: 'ghost danger',
@@ -1200,39 +1202,58 @@ function renderAccountPanel(mode = 'signin') {
     return;
   }
 
-  const tabs = el(
-    'div',
-    { class: 'auth-tabs' },
+  const tabs =
+    mode === 'reset-confirm'
+      ? null
+      : el(
+          'div',
+          { class: 'auth-tabs' },
     el('button', {
       type: 'button',
       class: mode === 'signin' ? 'is-active' : '',
-      text: store.CLOUD_ENABLED ? 'Sign in' : 'Use an account',
+      text: store.accountsAreShared() ? 'Sign in' : 'Use an account',
       onClick: () => renderAccountPanel('signin'),
     }),
     el('button', {
       type: 'button',
       class: mode === 'signup' ? 'is-active' : '',
-      text: store.CLOUD_ENABLED ? 'Create account' : 'New account',
+      text: store.accountsAreShared() ? 'Create account' : 'New account',
       onClick: () => renderAccountPanel('signup'),
     }),
   );
 
   panel.replaceChildren(
-    el('h3', { text: store.CLOUD_ENABLED ? 'Your account' : 'Accounts on this device' }),
+    el('h3', {
+      text:
+        mode === 'reset-confirm'
+          ? 'Set a new password'
+          : store.accountsAreShared()
+            ? 'Your account'
+            : 'Accounts on this device',
+    }),
     el('p', {
       class: 'muted',
-      text: store.CLOUD_ENABLED
-        ? 'Sign in and your spray log follows you to any phone or computer. The email is required so a forgotten password can be reset.'
-        : 'Accounts keep separate spray logs for each operator on this device. Email is required so a forgotten password can be reset if you later turn on cloud accounts.',
+      text:
+        mode === 'reset-confirm'
+          ? 'This signs every other device out of the account.'
+          : store.accountsAreShared()
+            ? 'Sign in once and your spray log follows you to any phone or computer. This device stays signed in unless the password is reset. Email is required so a forgotten password can be reset.'
+            : 'Accounts keep separate spray logs for each operator on this device. Email is required so a forgotten password can be reset if you later turn on the MySQL backend.',
     }),
     tabs,
-    mode === 'signup' ? signUpForm() : mode === 'reset' ? resetForm() : signInForm(),
+    mode === 'signup'
+      ? signUpForm()
+      : mode === 'reset'
+        ? resetForm()
+        : mode === 'reset-confirm'
+          ? resetConfirmForm()
+          : signInForm(),
   );
 }
 
 function signInForm() {
   const messageNode = el('p', { class: 'form-message' });
-  const legacy = store.CLOUD_ENABLED ? [] : store.listLocalAccounts().filter((account) => !account.email);
+  const legacy = store.accountsAreShared() ? [] : store.listLocalAccounts().filter((account) => !account.email);
 
   const form = el(
     'form',
@@ -1332,9 +1353,9 @@ function resetForm() {
     },
     el('p', {
       class: 'muted',
-      text: store.CLOUD_ENABLED
-        ? 'Enter the email the account was created with. A reset link will be sent there.'
-        : 'Password reset emails need cloud accounts. Without that, delete the account on this device and make a new one.',
+      text: store.accountsAreShared()
+        ? 'Enter the email the account was created with. A reset link will be sent there. Using it sets a new password and signs every other device out.'
+        : 'Password reset emails need the MySQL backend. Without that, delete the account on this device and make a new one.',
     }),
     el(
       'label',
@@ -1353,6 +1374,67 @@ function resetForm() {
         text: 'Back to sign in',
         onClick: () => renderAccountPanel('signin'),
       }),
+    ),
+  );
+}
+
+function resetConfirmForm() {
+  const messageNode = el('p', { class: 'form-message' });
+  const token = pendingResetToken;
+  return el(
+    'form',
+    {
+      onSubmit: async (event) => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(event.target).entries());
+        if (data.password !== data.confirm) {
+          message(messageNode, 'Those two passwords do not match.', true);
+          return;
+        }
+        try {
+          await store.completePasswordReset({ token, password: data.password });
+          pendingResetToken = '';
+          history.replaceState(null, '', location.pathname);
+          message(messageNode, 'Password updated. Sign in on this device. Every other device was signed out.');
+          renderAccountPanel('signin');
+        } catch (error) {
+          message(messageNode, error.message, true);
+        }
+      },
+    },
+    el('p', {
+      class: 'muted',
+      text: 'Choose a new password. This signs every other phone and computer out of the account.',
+    }),
+    el(
+      'label',
+      { class: 'field', style: 'margin-top:.7rem' },
+      el('span', { class: 'field-label', text: 'New password' }),
+      el('input', {
+        type: 'password',
+        name: 'password',
+        required: true,
+        minLength: 8,
+        autocomplete: 'new-password',
+      }),
+    ),
+    el(
+      'label',
+      { class: 'field', style: 'margin-top:.7rem' },
+      el('span', { class: 'field-label', text: 'Confirm password' }),
+      el('input', {
+        type: 'password',
+        name: 'confirm',
+        required: true,
+        minLength: 8,
+        autocomplete: 'new-password',
+      }),
+    ),
+    messageNode,
+    el(
+      'div',
+      { class: 'form-actions' },
+      el('button', { type: 'submit', class: 'primary', text: 'Save new password' }),
     ),
   );
 }
@@ -1389,7 +1471,7 @@ function signUpForm() {
         name: 'name',
         required: true,
         autocomplete: 'name',
-        placeholder: store.CLOUD_ENABLED ? '' : 'Dad, hired man, sprayer 2',
+        placeholder: store.accountsAreShared() ? '' : 'Dad, hired man, sprayer 2',
       }),
     ),
     el(
@@ -1684,9 +1766,13 @@ function applyProfileValues(profile) {
 
 /* ---------------- wiring ---------------- */
 
-function init() {
+async function init() {
+  await store.restoreSession();
+
   const profile = store.loadProfile();
   const params = new URLSearchParams(location.search);
+  pendingResetToken = params.get('reset') || '';
+  if (pendingResetToken) params.delete('reset');
   readProfileState(profile);
   readUrlState(params);
 
@@ -1754,12 +1840,24 @@ function init() {
   });
   renderCatalogPicker();
 
-  $('#storage-note').textContent = store.CLOUD_ENABLED
-    ? 'Spray records are stored in your account. Records saved without signal are held on the device and uploaded next time.'
-    : 'Spray records are stored in this browser on this device. Export a CSV now and then so you have a copy, or turn on account sync as described in the README.';
+  if (store.BACKEND === 'mysql') {
+    $('#storage-note').textContent =
+      'Spray records and accounts are stored in MySQL, so the same log is on every phone and computer. This device stays signed in until you sign out or the password is reset. Records saved without signal are held on the device and uploaded next time.';
+  } else if (store.accountsAreShared()) {
+    $('#storage-note').textContent =
+      'Spray records are stored in your account. Records saved without signal are held on the device and uploaded next time.';
+  } else {
+    $('#storage-note').textContent =
+      'Spray records are stored in this browser on this device. Export a CSV now and then so you have a copy, or turn on MySQL as described in the README so the log follows you.';
+  }
 
   renderAccountButton();
   refreshRecords();
+
+  if (pendingResetToken) {
+    renderAccountPanel('reset-confirm');
+    $('#account-dialog').showModal();
+  }
 
   if (fromUrl) {
     const { input, problems } = readForm();

@@ -9,7 +9,7 @@
  * phones that already installed it will keep serving the old copy.
  */
 
-const CACHE_VERSION = 'nozzlecalc-v4';
+const CACHE_VERSION = 'nozzlecalc-v5';
 
 const ASSETS = [
   '.',
@@ -50,9 +50,9 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
-  /* Never cache the Supabase API: stale spray records would be worse than an
-   * error message. */
-  if (url.origin !== location.origin) return;
+  /* Never cache the account API or a third-party backend: stale spray records
+   * would be worse than an error message. */
+  if (url.pathname.includes('/api/') || url.origin !== location.origin) return;
 
   event.respondWith(
     caches.match(request).then((cached) => {

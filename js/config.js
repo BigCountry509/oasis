@@ -1,18 +1,16 @@
 /*
- * Optional cloud sync.
+ * Where accounts and spray records live.
  *
- * Leave these blank and the site still works completely: accounts and spray
- * records are kept in the browser on the device you are using. That is enough
- * for one tablet in one cab, and it needs no signup and no internet.
+ * API_URL points at the PHP/MySQL backend that ships with this site. Leave it
+ * as '/api' on a host that can run PHP (Pterodactyl, any nginx+php-fpm box).
+ * Fill in api/config.php and run mysql/schema.sql and the same account works
+ * on every phone and computer. A blank string skips the MySQL probe.
  *
- * Fill both in with a free Supabase project and accounts become real accounts:
- * you sign in with an email and password, records sync, and the same log shows
- * up on the office computer and every phone. Setup is in README.md under
- * "Turning on real accounts", and the table it needs is in supabase/schema.sql.
- *
- * The anon key is designed to be public and safe to commit. Row level security
- * in schema.sql is what stops one account reading another's records.
+ * SUPABASE_URL / SUPABASE_ANON_KEY are an optional fallback if you would
+ * rather use a hosted Supabase project instead of your own MySQL. Leave them
+ * blank unless you are using that path. Setup is in README.md.
  */
 
+export const API_URL = '/api';
 export const SUPABASE_URL = '';
 export const SUPABASE_ANON_KEY = '';

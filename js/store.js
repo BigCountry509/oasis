@@ -1,26 +1,29 @@
 /*
  * Accounts, spray records and sprayer profiles.
  *
- * There are two interchangeable backends behind one interface:
+ * There are three interchangeable backends behind one interface:
  *
- *   local  - the default. Accounts and records live in this browser. Creating
- *            an account needs a name, an email and a password. The email is
- *            required so a forgotten password can be reset once cloud accounts
- *            are turned on. No internet, nothing leaves the device.
+ *   local  - the default when MySQL is not configured. Accounts and records
+ *            live in this browser. Creating an account needs a name, an email
+ *            and a password.
  *
- *   cloud  - switched on by filling in js/config.js with a Supabase project.
- *            Real email and password accounts, records stored server side with
- *            row level security, and the same log on every device. Writes made
+ *   mysql  - the intended setup on a host like Pterodactyl. Fill in
+ *            api/config.php and run mysql/schema.sql. Accounts and spray
+ *            records live in MySQL, so the same log is on every phone and
+ *            computer. A device stays signed in for a year unless the
+ *            password is reset, which signs every device out. Writes made
  *            with no signal go to an outbox and are pushed on the next load.
+ *
+ *   cloud  - optional Supabase fallback, switched on from js/config.js.
  *
  * The rest of the app only ever calls the exported functions, so it does not
  * care which backend is live.
  */
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+import { API_URL, SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
-export const CLOUD_ENABLED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
-export const BACKEND = CLOUD_ENABLED ? 'cloud' : 'local';
+export let BACKEND = 'local';
+export let CLOUD_ENABLED = false;
 
 const KEYS = {
   accounts: 'nozzlecalc.accounts',
@@ -31,6 +34,50 @@ const KEYS = {
 };
 
 const DEVICE_ACCOUNT = 'device';
+
+function apiRoot() {
+  return String(API_URL || '').replace(/\/$/, '');
+}
+
+export async function connectBackend() {
+  if (apiRoot()) {
+    try {
+      const response = await fetch(`${apiRoot()}/index.php?action=health`);
+      const payload = await response.json();
+      if (payload?.ok) {
+        BACKEND = 'mysql';
+        CLOUD_ENABLED = false;
+        return BACKEND;
+      }
+    } catch {
+      /* MySQL is optional. Fall through. */
+    }
+  }
+  /* A remembered MySQL login should keep talking to MySQL even if the health
+   * check failed (out of signal, brief outage). Otherwise this device would
+   * look signed in against an empty local log. */
+  if (session?.mode === 'mysql' && apiRoot()) {
+    BACKEND = 'mysql';
+    CLOUD_ENABLED = false;
+    return BACKEND;
+  }
+  if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+    BACKEND = 'cloud';
+    CLOUD_ENABLED = true;
+    return BACKEND;
+  }
+  BACKEND = 'local';
+  CLOUD_ENABLED = false;
+  return BACKEND;
+}
+
+export function backendKind() {
+  return BACKEND;
+}
+
+export function accountsAreShared() {
+  return BACKEND === 'mysql' || BACKEND === 'cloud';
+}
 
 function readJson(key, fallback) {
   try {
@@ -223,6 +270,86 @@ async function withAuth(request) {
   }
 }
 
+async function api(action, { method = 'POST', body, auth = true } = {}) {
+  const payload = { ...(body || {}), action };
+  const query = method === 'GET' ? `?action=${encodeURIComponent(action)}` : '';
+  const response = await fetch(`${apiRoot()}/index.php${query}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(auth && session?.accessToken ? { Authorization: `Bearer ${session.accessToken}` } : {}),
+    },
+    body: method === 'GET' ? undefined : JSON.stringify(payload),
+  });
+  const text = await response.text();
+  let parsed = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+  if (!response.ok) {
+    const error = new Error(parsed?.message || `Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return parsed;
+}
+
+function rememberMysqlSession(user, token) {
+  setSession({
+    mode: 'mysql',
+    accountId: user.id,
+    email: user.email,
+    name: user.name,
+    accessToken: token,
+  });
+  return session;
+}
+
+async function mysqlSignUp({ email, password, name }) {
+  const payload = await api('signup', {
+    auth: false,
+    body: { email, password, name, origin: typeof location !== 'undefined' ? location.origin : '' },
+  });
+  return { session: rememberMysqlSession(payload.user, payload.token), needsConfirmation: false };
+}
+
+async function mysqlSignIn({ email, password }) {
+  const payload = await api('signin', {
+    auth: false,
+    body: { email, password },
+  });
+  return rememberMysqlSession(payload.user, payload.token);
+}
+
+export async function restoreSession() {
+  await connectBackend();
+  if (BACKEND === 'mysql' && session?.accessToken && session.mode === 'mysql') {
+    try {
+      const payload = await api('me', { method: 'GET' });
+      setSession({
+        ...session,
+        mode: 'mysql',
+        accountId: payload.user.id,
+        email: payload.user.email,
+        name: payload.user.name,
+      });
+      await flushOutbox();
+      return session;
+    } catch (error) {
+      /* 401 means the password was reset or this device was signed out. */
+      if (error.status === 401) setSession(null);
+      return session;
+    }
+  }
+  if (BACKEND === 'cloud' && session?.mode === 'cloud') {
+    await cloudRefresh();
+    await flushOutbox();
+  }
+  return session;
+}
+
 /* ---------- accounts ---------- */
 
 export function listLocalAccounts() {
@@ -247,8 +374,10 @@ export async function signUp({ name, email, password, pin }) {
   const normalizedEmail = normalizeEmail(email);
   const secret = (password || pin || '').trim();
   if (secret.length < 8) throw new Error('Password needs at least 8 characters.');
+  if (BACKEND === 'mysql' && !trimmedName) throw new Error('Give the account a name.');
 
-  if (CLOUD_ENABLED) return cloudSignUp({ email: normalizedEmail, password: secret, name: trimmedName });
+  if (BACKEND === 'mysql') return mysqlSignUp({ email: normalizedEmail, password: secret, name: trimmedName });
+  if (BACKEND === 'cloud') return cloudSignUp({ email: normalizedEmail, password: secret, name: trimmedName });
 
   if (!trimmedName) throw new Error('Give the account a name.');
   const accounts = readJson(KEYS.accounts, []);
@@ -293,10 +422,11 @@ export async function signUp({ name, email, password, pin }) {
 }
 
 export async function signIn({ accountId, email, password, pin }) {
-  if (CLOUD_ENABLED) return cloudSignIn({ email, password });
+  const secret = password || pin || '';
+  if (BACKEND === 'mysql') return mysqlSignIn({ email: normalizeEmail(email), password: secret });
+  if (BACKEND === 'cloud') return cloudSignIn({ email: normalizeEmail(email), password: secret });
 
   const accounts = readJson(KEYS.accounts, []);
-  const secret = password || pin || '';
   const account = accountId
     ? accounts.find((item) => item.id === accountId)
     : accounts.find((item) => item.email && item.email === String(email || '').trim().toLowerCase());
@@ -316,7 +446,18 @@ export async function signIn({ accountId, email, password, pin }) {
 
 export async function requestPasswordReset(email) {
   const normalized = normalizeEmail(email);
-  if (CLOUD_ENABLED) {
+  if (BACKEND === 'mysql') {
+    const origin =
+      typeof location !== 'undefined'
+        ? location.origin + String(location.pathname || '').replace(/\/index\.html$/i, '')
+        : '';
+    await api('reset-request', {
+      auth: false,
+      body: { email: normalized, origin },
+    });
+    return { sent: true };
+  }
+  if (BACKEND === 'cloud') {
     await supabase('/auth/v1/recover', {
       method: 'POST',
       auth: false,
@@ -325,12 +466,29 @@ export async function requestPasswordReset(email) {
     return { sent: true };
   }
   throw new Error(
-    'Password reset emails need cloud accounts turned on. Until then, delete the account on this device and make a new one.',
+    'Password reset emails need the MySQL backend turned on. Until then, delete the account on this device and make a new one.',
   );
 }
 
+export async function completePasswordReset({ token, password }) {
+  if (BACKEND !== 'mysql') throw new Error('Password reset is not available.');
+  const secret = String(password || '').trim();
+  if (!token) throw new Error('That reset link is missing its token. Request a new one.');
+  if (secret.length < 8) throw new Error('Password needs at least 8 characters.');
+  await api('reset-confirm', { auth: false, body: { token, password: secret } });
+  setSession(null);
+  return { ok: true };
+}
+
 export async function signOut() {
-  if (CLOUD_ENABLED && session?.accessToken) {
+  if (BACKEND === 'mysql' && session?.accessToken) {
+    try {
+      await api('signout', { body: {} });
+    } catch {
+      /* Signing out locally matters more than telling the server about it. */
+    }
+  }
+  if (BACKEND === 'cloud' && session?.accessToken) {
     try {
       await supabase('/auth/v1/logout', { method: 'POST' });
     } catch {
@@ -341,7 +499,9 @@ export async function signOut() {
 }
 
 export async function deleteLocalAccount(accountId) {
-  if (CLOUD_ENABLED) throw new Error('Cloud accounts are managed in Supabase.');
+  if (BACKEND === 'mysql' || BACKEND === 'cloud') {
+    throw new Error('Shared accounts are managed on the server, not deleted from this device.');
+  }
   const accounts = readJson(KEYS.accounts, []).filter((account) => account.id !== accountId);
   writeJson(KEYS.accounts, accounts);
   localStorage.removeItem(KEYS.records(accountId));
@@ -448,13 +608,29 @@ function sortRecords(records) {
   });
 }
 
+function mergeQueued(records) {
+  const queued = readJson(KEYS.outbox, []);
+  if (!queued.length) return records;
+  const byId = new Map(records.map((record) => [record.id, record]));
+  for (const item of queued) {
+    const { queuedAt, ...record } = item;
+    if (record.id) byId.set(record.id, record);
+  }
+  return sortRecords([...byId.values()]);
+}
+
 export async function listRecords() {
-  if (CLOUD_ENABLED && session?.mode === 'cloud') {
+  if (BACKEND === 'mysql' && session?.mode === 'mysql') {
+    await flushOutbox();
+    const payload = await api('records', { method: 'GET' });
+    return mergeQueued(sortRecords((payload.records || []).map(fromRow)));
+  }
+  if (BACKEND === 'cloud' && session?.mode === 'cloud') {
     await flushOutbox();
     const rows = await withAuth(() =>
       supabase('/rest/v1/spray_records?select=*&order=applied_on.desc,created_at.desc'),
     );
-    return rows.map(fromRow);
+    return mergeQueued(rows.map(fromRow));
   }
   return sortRecords(localRecords());
 }
@@ -465,7 +641,21 @@ export async function saveRecord(record) {
     createdAt: record.createdAt || new Date().toISOString(),
   };
 
-  if (CLOUD_ENABLED && session?.mode === 'cloud') {
+  if (BACKEND === 'mysql' && session?.mode === 'mysql') {
+    if (!stamped.id) stamped.id = newId();
+    try {
+      const payload = await api('save-record', { body: { record: stamped } });
+      return { record: fromRow(payload.record), queued: false };
+    } catch (error) {
+      if (isNetworkError(error)) {
+        queueOutbox(stamped);
+        return { record: stamped, queued: true };
+      }
+      throw error;
+    }
+  }
+
+  if (BACKEND === 'cloud' && session?.mode === 'cloud') {
     try {
       const row = toRow(stamped);
       const rows = stamped.id
@@ -505,7 +695,15 @@ export async function saveRecord(record) {
 }
 
 export async function deleteRecord(id) {
-  if (CLOUD_ENABLED && session?.mode === 'cloud') {
+  if (BACKEND === 'mysql' && session?.mode === 'mysql') {
+    writeJson(
+      KEYS.outbox,
+      readJson(KEYS.outbox, []).filter((record) => record.id !== id),
+    );
+    await api('delete-record', { body: { id } });
+    return;
+  }
+  if (BACKEND === 'cloud' && session?.mode === 'cloud') {
     await withAuth(() =>
       supabase(`/rest/v1/spray_records?id=eq.${id}`, { method: 'DELETE' }),
     );
@@ -532,9 +730,27 @@ export function outboxCount() {
 }
 
 export async function flushOutbox() {
-  if (!CLOUD_ENABLED || session?.mode !== 'cloud') return 0;
+  if (!session) return 0;
   const outbox = readJson(KEYS.outbox, []);
   if (!outbox.length) return 0;
+
+  if (BACKEND === 'mysql' && session.mode === 'mysql') {
+    const remaining = [];
+    let pushed = 0;
+    for (const record of outbox) {
+      try {
+        const { queuedAt, ...rest } = record;
+        await api('save-record', { body: { record: rest } });
+        pushed += 1;
+      } catch (error) {
+        if (isNetworkError(error) || error.status >= 500) remaining.push(record);
+      }
+    }
+    writeJson(KEYS.outbox, remaining);
+    return pushed;
+  }
+
+  if (BACKEND !== 'cloud' || session.mode !== 'cloud') return 0;
 
   const remaining = [];
   let pushed = 0;

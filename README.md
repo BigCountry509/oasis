@@ -5,8 +5,11 @@ application, enter your rate, speed, spacing and pressure limits, and it tells y
 to fit, what pressure to set it at, and what droplet size you will actually get. It keeps a log of
 what you sprayed, with the nozzles you used, under an account.
 
-It is a plain static website. No build step, no server, no dependencies. Put the files on any web
-host and it runs.
+It is a plain website. The calculator itself is static HTML, CSS and JavaScript with
+no build step. Put the files on any web host and it runs. To share accounts and spray
+records across phones and computers, host it on a box that can run PHP and MySQL
+(Pterodactyl with the nginx + PHP-FPM egg is the intended setup) and fill in
+`api/config.php`.
 
 ## What it does
 
@@ -48,6 +51,42 @@ It also installs to a phone home screen and works with no signal, which is where
 
 ## Hosting it
 
+### Pterodactyl (MySQL accounts, the intended setup)
+
+Use an nginx egg that has PHP-FPM, such as tenten8401's nginx egg. Keep the egg's
+`start.sh`, `nginx/` and `php-fpm/` files at the **server root**. Put this site in
+**`webroot/`**, including the `api/` folder.
+
+1. Copy the site into `webroot/` so you have `webroot/index.html`, `webroot/js/`,
+   `webroot/api/`, `webroot/mysql/` and so on.
+2. In the Pterodactyl **Databases** tab, create a MySQL database. Note the host,
+   port, database name, username and password.
+3. In a MySQL client (or `mysql` from the database tab), run the contents of
+   [`mysql/schema.sql`](mysql/schema.sql). That creates `users`, `sessions`,
+   `password_resets` and `spray_records`.
+4. Edit [`api/config.php`](api/config.php) (on the server that is
+   `webroot/api/config.php`) and fill in those database values. Leave
+   `site_url` blank unless password-reset emails should use a specific public URL.
+5. Reload the site. The footer should say records are stored in MySQL. Create an
+   account with a name, email and password. That same login works on every device.
+
+Do not commit a filled-in `config.php` with a real password. Keep secrets on the
+server.
+
+The PHP API lives at `/api/index.php`. The page probes `/api/index.php?action=health`
+on load. Until `config.php` has a database name and user, the site keeps using
+browser storage so a missing database does not break the calculator.
+
+**Device remembering.** After you sign in, this browser keeps a session token for
+about a year. You do not sign in again on that phone or computer unless you sign
+out, clear the site data, or reset the password.
+
+**Password reset.** Forgot password emails the address on the account (this uses
+PHP `mail()`, which only works if the host can send mail). Opening the link and
+setting a new password **revokes every session**, so every other device has to
+sign in again. That is the point: a reset password is useless if the old devices
+stay logged in.
+
 ### GitHub Pages, the free option
 
 1. Push this repository to GitHub.
@@ -73,18 +112,35 @@ python3 -m http.server 8080
 # then open http://localhost:8080
 ```
 
+To try the MySQL API on your own machine, serve with PHP so `/api/index.php` runs:
+
+```bash
+php -S localhost:8080
+```
+
+Fill in `api/config.php` against a local MySQL database first.
+
 ## Accounts and where your records go
 
-Out of the box, accounts and spray records are stored **in the browser on the device you are using**.
-Nothing is uploaded. Creating an account requires a name, an email and a password of at least eight
-characters. The email is required so a forgotten password can be reset. Multiple accounts on one
-device keep separate logs, which is useful for a shared cab tablet. Export a CSV occasionally so
-you have a copy.
+The site picks a backend in this order:
 
-Password reset emails only go out once cloud accounts are turned on below. Until then, delete the
-account on the device and make a new one.
+1. **MySQL**, if `/api` answers healthy (fill in `api/config.php` and run
+   `mysql/schema.sql`). Accounts, passwords and spray records live in your database.
+   The same login and the same log work on every phone and computer. A device stays
+   signed in until you sign out or the password is reset.
+2. **Supabase**, if you fill in `js/config.js` instead and MySQL is not configured.
+3. **This browser**, if neither of those is set up. Accounts and records stay on
+   that one device. Creating an account still needs a name, an email and a password
+   of at least eight characters.
 
-### Turning on real accounts
+Multiple local accounts on one device keep separate logs, which is useful for a
+shared cab tablet. Export a CSV occasionally so you have a copy.
+
+Password reset emails go out from the MySQL API (or from Supabase if you are on
+that path). Until a shared backend is on, delete the account on the device and
+make a new one.
+
+### Optional: Supabase instead of MySQL
 
 Fill in `js/config.js` with a free [Supabase](https://supabase.com) project and accounts become real
 accounts with an email and password, records stored server side, and the same log on every phone and
