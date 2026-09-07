@@ -12,7 +12,7 @@ host and it runs.
 
 **Nozzle recommendation.** Choose a boom sprayer or an air blast sprayer, then choose the job:
 burndown and residual, contact herbicide, systemic herbicide, restricted auxins like dicamba and
-2,4-D choline, fungicide, insecticide, liquid fertilizer, band spraying, PGRs and harvest aids, or
+2,4-D choline, fungicide, insecticide, liquid fertilizer broadcast or streamed, band spraying, PGRs and harvest aids, or
 air blast fungicide, insecticide, drift sensitive and foliar passes. Each job carries its own target
 droplet spectrum and carrier volume range, so the same rate and speed give different answers for a
 contact herbicide than for a residual.
@@ -135,34 +135,64 @@ Every TeeJet capacity number is the flow in US GPM at 40 PSI, so an 11003 is 0.3
 Because flow follows the square root of pressure, four times the pressure only doubles the flow.
 That is why pressure is for small trims and a tip change is for real changes.
 
+Liquid fertilizer is heavier than water and the tip charts are printed for water, so a fertilizer
+job asks for the solution weight and sizes the tip on the water equivalent flow:
+
+```
+water equivalent flow = flow you want x sqrt(lb per gallon / 8.34)
+```
+
+At 10.66 lb per gallon, 28 per cent UAN comes out about 13 per cent slower than water through the
+same tip at the same pressure, which matches the conversion factor TeeJet tabulates. Skip that and
+you under apply by that much all day.
+
 ## Where the data comes from
 
 | Data | Source |
 | --- | --- |
-| Droplet size classes for boom tips | TeeJet LI-TJ420, droplet size data to the ISO 25358 standard, 15 inch tip spacing chart |
+| Droplet size classes for boom flat fans | TeeJet LI-TJ420, droplet size data to the ISO 25358 standard, 15 inch tip spacing chart |
+| DG TeeJet and Turbo FloodJet droplet classes and capacities | The droplet size and application rate tables on their TeeJet product pages, also ISO 25358 |
+| StreamJet SJ3 and SJ7A capacities | TeeJet catalog CAT52-US, fertilizer nozzle section |
 | Boom tip capacities and pressure ranges | TeeJet published capacity charts and recommended pressure ranges per series |
-| Air blast cone tips | TeeJet catalog CAT52-US, air blast nozzle section |
+| Air blast cone tips and disc-core capacity tables | TeeJet catalog CAT52-US, air blast nozzle section |
 | Air blast calibration constants and canopy volume split | University extension orchard and air blast sprayer calibration guidance |
+| Liquid density correction | TeeJet catalog liquid density conversion factors |
 
 Tip families included:
 
-- **Boom flat fans:** XR/XRC, TT, TTJ60, AIXR, AI3070, AITTJ60, AI/AIC, TTI60, TTI
+- **Boom flat fans:** XR/XRC, TT, TTJ60, AIXR, AI3070, AITTJ60, AI/AIC, TTI60, TTI, DG
+- **Flooding:** TF Turbo FloodJet
+- **Fertilizer streamer bars:** StreamJet SJ3 (three streams) and SJ7A (seven streams)
 - **Air blast and directed cones:** TXA/TXB ConeJet, AITXA/AITXB air induction ConeJet
-
-Not included: disc and core combination nozzles, flooding tips and streamer bars. Those are on the
-list rather than guessed at, because the published tables for them are laid out differently and this
-tool only quotes numbers it can cite.
+- **Air blast disc and core:** D disc with DC25, DC45 and DC56 cores, as a lookup table only
 
 Droplet classifications are published at set pressures and against a specific standard, and TeeJet
 revises them. The tool tells you when the droplet class it shows came from the nearest charted
 pressure rather than your exact one.
 
+Two families are handled as exceptions, both for the same reason: the tool only quotes numbers it
+can cite.
+
+- **Streamer bars have no droplet class**, because a solid stream has no droplet spectrum to
+  classify. They are offered for fertilizer jobs only and never for anything that has to hit a leaf.
+  Their published capacities also do not follow the square root law, so the printed table is stored
+  and read directly instead of being derived from the 40 PSI figure.
+- **Disc and core assemblies carry no published droplet classification at all.** They are the
+  nozzles to reach for when an air blast machine needs more volume than the moulded cone tips can
+  pass, so their capacity tables are in the tip catalog under Tools, but the calculator will not
+  recommend one, because doing so would mean inventing a droplet class for it.
+
 ## Adding or changing tips
 
-All tip data lives in [`js/data/nozzles.js`](js/data/nozzles.js). Boom tips are a droplet class grid
-copied from the TeeJet chart, keyed by capacity and pressure, with the flow derived from the
-capacity number. To add a series, add an entry to `BOOM_SERIES_META` with its published pressure
-range and add its column to the droplet grid.
+All tip data lives in [`js/data/nozzles.js`](js/data/nozzles.js). Boom flat fans are a droplet class
+grid copied from the TeeJet chart, keyed by capacity and pressure, with the flow derived from the
+capacity number. To add a flat fan series, add an entry to `BOOM_SERIES_META` with its published
+pressure range and add its column to the droplet grid.
+
+Families charted at their own pressures or with their own capacity numbers, such as DG and the
+Turbo FloodJet, go in `FAN_SERIES_META` with their own droplet table. Streamer bars go in
+`STREAM_SERIES_META` with their published flow table. Disc and core capacities are reference data in
+`DISC_CORE_SETS`, which is deliberately not part of the tip list the calculator searches.
 
 Job presets, their target droplet ranges and their guidance text live in
 [`js/data/applications.js`](js/data/applications.js).

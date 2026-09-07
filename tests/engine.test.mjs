@@ -16,6 +16,7 @@ import {
   airblastTotalFlow,
   airblastGpa,
   canopyWeights,
+  densityFactor,
   ozPerMinute,
   tipWear,
   tankMath,
@@ -23,9 +24,19 @@ import {
   recommendAirblast,
   pressureWindow,
   windDropletFloor,
+  WATER_LB_PER_GAL,
 } from '../js/engine.js';
 
-import { TIPS, flowAtPsi, psiForFlow, dropletAtPsi, NOMINAL_GPM } from '../js/data/nozzles.js';
+import {
+  DISC_CORE_SETS,
+  TIPS,
+  flowAtPsi,
+  psiForFlow,
+  dropletAtPsi,
+  tipFlowAtPsi,
+  tipPsiForFlow,
+  NOMINAL_GPM,
+} from '../js/data/nozzles.js';
 import { APPLICATIONS, getApplication } from '../js/data/applications.js';
 
 const close = (actual, expected, tolerance, message) => {
@@ -545,6 +556,168 @@ test('the catalog only offers capacities that TeeJet actually lists', () => {
   for (const partNo of ['XR11003VS', 'TT11004VP', 'AIXR11005VP', 'TTI11004VP', 'AI11002VS']) {
     assert.ok(partNumbers.includes(partNo), `${partNo} missing from the catalog`);
   }
+});
+
+test('DG and Turbo FloodJet match their published tables', () => {
+  const find = (partNo) => TIPS.find((tip) => tip.partNo === partNo);
+
+  /* DG TeeJet product page, 110 degree column. */
+  const dg03 = find('DG11003VS');
+  assert.ok(dg03, 'DG11003 is in the catalog');
+  close(tipFlowAtPsi(dg03, 30), 0.26, 0.005, 'DG11003 at 30 PSI');
+  close(tipFlowAtPsi(dg03, 60), 0.37, 0.005, 'DG11003 at 60 PSI');
+  assert.equal(dropletAtPsi(dg03, 30).droplet, 'C');
+  assert.equal(dropletAtPsi(dg03, 40).droplet, 'M');
+  assert.equal(dropletAtPsi(find('DG110015VS'), 60).droplet, 'F');
+  assert.equal(dropletAtPsi(find('DG11005VS'), 40).droplet, 'C');
+  for (const tip of TIPS.filter((item) => item.seriesId === 'dg')) {
+    assert.equal(tip.psiMin, 30, 'DG needs 30 PSI to make its pattern');
+    assert.equal(tip.psiMax, 60);
+  }
+
+  /* Turbo FloodJet product page. A TF capacity number is its flow at 10 PSI in
+   * tenths of a GPM, so a TF-2 is 0.40 GPM at 40 PSI. */
+  const tf2 = find('TF-VP2');
+  assert.ok(tf2, 'TF-VP2 is in the catalog');
+  close(tipFlowAtPsi(tf2, 10), 0.2, 0.005, 'TF-2 at 10 PSI');
+  close(tipFlowAtPsi(tf2, 20), 0.28, 0.005, 'TF-2 at 20 PSI');
+  close(tipFlowAtPsi(tf2, 40), 0.4, 0.005, 'TF-2 at 40 PSI');
+  close(tipFlowAtPsi(find('TF-VP10'), 40), 2.0, 0.005, 'TF-10 at 40 PSI');
+  assert.equal(dropletAtPsi(tf2, 10).droplet, 'UC');
+  assert.equal(dropletAtPsi(tf2, 40).droplet, 'C');
+  assert.equal(dropletAtPsi(find('TF-VP5'), 40).droplet, 'VC');
+});
+
+test('streamer bar flows come straight off the published table', () => {
+  /* CAT52-US fertilizer section. These capacities do not follow the square root
+   * law, which is exactly why they are stored rather than derived. */
+  const published = {
+    'SJ3-015-VP': { 20: 0.11, 30: 0.13, 40: 0.15, 50: 0.16, 60: 0.17 },
+    'SJ3-03-VP': { 20: 0.24, 30: 0.27, 40: 0.3, 50: 0.33, 60: 0.35 },
+    'SJ3-20-VP': { 20: 1.41, 30: 1.75, 40: 2.0, 50: 2.28, 60: 2.49 },
+    'SJ7A-02-VP': { 20: 0.14, 30: 0.17, 40: 0.2, 50: 0.23, 60: 0.25 },
+    'SJ7A-15-VP': { 20: 1.03, 30: 1.29, 40: 1.5, 50: 1.64, 60: 1.76 },
+  };
+  for (const [partNo, table] of Object.entries(published)) {
+    const tip = TIPS.find((item) => item.partNo === partNo);
+    assert.ok(tip, `${partNo} is in the catalog`);
+    for (const [psi, gpm] of Object.entries(table)) {
+      close(tipFlowAtPsi(tip, Number(psi)), gpm, 1e-9, `${partNo} at ${psi} PSI`);
+      close(tipPsiForFlow(tip, gpm), Number(psi), 1e-6, `${partNo} solving back to ${psi} PSI`);
+    }
+  }
+
+  /* Some of these sizes are a long way off the square root law, which is the
+   * whole reason the table is stored rather than derived. An SJ3-03 flows 0.24
+   * GPM at 20 PSI where the square root of its 40 PSI rating says 0.21. */
+  const sj303 = TIPS.find((item) => item.partNo === 'SJ3-03-VP');
+  close(flowAtPsi(sj303.gpm40, 20), 0.212, 0.001, 'what the square root law would say');
+  close(tipFlowAtPsi(sj303, 20), 0.24, 1e-9, 'what TeeJet publishes');
+
+  /* Between the charted pressures the curve still has to behave. */
+  const tip = TIPS.find((item) => item.partNo === 'SJ3-05-VP');
+  let previous = 0;
+  for (let psi = 20; psi <= 60; psi += 1) {
+    const gpm = tipFlowAtPsi(tip, psi);
+    assert.ok(gpm > previous, `flow rises through ${psi} PSI`);
+    close(tipPsiForFlow(tip, gpm), psi, 1e-6, `round trip at ${psi} PSI`);
+    previous = gpm;
+  }
+});
+
+test('streamer bars are only ever offered for fertilizer', () => {
+  const base = { sprayerType: 'boom', gpa: 25, mph: 8, spacingInches: 20 };
+  for (const applicationId of ['post_contact', 'fungicide', 'burndown', 'restricted', 'fertilizer']) {
+    const output = recommendBoom({ ...base, applicationId });
+    assert.ok(
+      output.results.every((result) => result.tip.pattern !== 'stream'),
+      `${applicationId} was offered a streamer bar`,
+    );
+  }
+
+  const streamed = recommendBoom({ ...base, applicationId: 'fertilizer_stream' });
+  assert.ok(streamed.results.length > 0, 'the streamed job finds tips');
+  for (const result of streamed.results) {
+    assert.equal(result.tip.pattern, 'stream');
+    assert.equal(result.dropletClass, null, 'a solid stream has no droplet class');
+    close(
+      boomGpa({ gpm: tipFlowAtPsi(result.tip, result.psi), mph: 8, spacingInches: 20 }),
+      25,
+      1e-6,
+      `${result.tip.partNo} delivered rate`,
+    );
+  }
+
+  /* Flooding tips are for soil targets and fertilizer, not for a fungicide. */
+  const fungicide = recommendBoom({ ...base, applicationId: 'fungicide' });
+  assert.ok(fungicide.results.every((result) => result.tip.pattern !== 'flood'));
+  const fertilizer = recommendBoom({ ...base, applicationId: 'fertilizer' });
+  assert.ok(
+    fertilizer.results.some((result) => result.tip.pattern === 'flood'),
+    'a flooding tip is in the running for a fertilizer pass',
+  );
+});
+
+test('a heavy solution is sized on its water equivalent flow', () => {
+  /* TeeJet tabulates 1.13 as the conversion factor for a 1.28 kg/l nitrogen
+   * solution, which is 28% UAN at 10.66 lb per gallon. */
+  close(densityFactor(10.66), 1.13, 0.005, '28% UAN conversion factor');
+  assert.equal(densityFactor(WATER_LB_PER_GAL), 1);
+  assert.equal(densityFactor(undefined), 1);
+
+  const base = { sprayerType: 'boom', applicationId: 'fertilizer', gpa: 30, mph: 8, spacingInches: 20 };
+  const water = recommendBoom(base);
+  const uan = recommendBoom({ ...base, solutionLbPerGal: 10.66 });
+
+  close(uan.solutionGpm, water.solutionGpm, 1e-9, 'the volume to put on has not changed');
+  close(uan.requiredGpm, water.solutionGpm * densityFactor(10.66), 1e-9, 'water equivalent flow');
+
+  /* Same tip, heavier load, so it has to be run harder to keep the rate. */
+  const shared = uan.results.find((result) =>
+    water.results.some((other) => other.tip.id === result.tip.id),
+  );
+  assert.ok(shared, 'the two runs share at least one tip');
+  const onWater = water.results.find((result) => result.tip.id === shared.tip.id);
+  assert.ok(shared.psi > onWater.psi, `${shared.tip.partNo} should need more pressure on UAN`);
+
+  /* And the rate reported back is the rate of fertilizer going on the ground,
+   * not the water figure off the chart. */
+  for (const result of uan.results) {
+    close(result.gpaAtSetPsi, 30, 0.6, `${result.tip.partNo} delivered rate`);
+  }
+});
+
+test('the disc-core reference tables are consistent and kept out of the recommender', () => {
+  for (const set of DISC_CORE_SETS) {
+    for (const [partNo, flows] of set.rows) {
+      assert.equal(flows.length, set.psiSteps.length, `${partNo} row length`);
+      const charted = flows.filter((gpm) => gpm !== null);
+      assert.ok(charted.length >= 7, `${partNo} has most of its pressures charted`);
+      /* Flow can only rise with pressure. */
+      for (let index = 1; index < charted.length; index += 1) {
+        assert.ok(charted[index] > charted[index - 1], `${partNo} flow rises with pressure`);
+      }
+      /* A dash only ever appears at the low pressure end of a row. */
+      const firstCharted = flows.findIndex((gpm) => gpm !== null);
+      assert.ok(
+        flows.slice(firstCharted).every((gpm) => gpm !== null),
+        `${partNo} has a gap in the middle of the row`,
+      );
+    }
+    /* TeeJet publishes no droplet class for these, so they must not be
+     * recommendable: the calculator would have to invent one. */
+    for (const [partNo] of set.rows) {
+      assert.ok(!TIPS.some((tip) => tip.partNo === partNo), `${partNo} leaked into the tip list`);
+    }
+  }
+  /* But they do go far larger than the cone tips, which is the point of them. */
+  const biggestCone = Math.max(
+    ...TIPS.filter((tip) => tip.sprayerType === 'airblast').map((tip) => tip.gpm40),
+  );
+  const biggestDiscCore = Math.max(
+    ...DISC_CORE_SETS.flatMap((set) => set.rows.map(([, flows]) => flows[set.psiSteps.indexOf(40)] || 0)),
+  );
+  assert.ok(biggestDiscCore > biggestCone * 3, 'disc-core assemblies cover the high volume end');
 });
 
 test('an air induction boom tip is never given a pressure below its own minimum', () => {

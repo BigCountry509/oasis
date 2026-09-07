@@ -2,9 +2,13 @@
  * TeeJet spray tip catalog.
  *
  * Data sources (all TeeJet published literature):
- *   - Droplet size grid for boom tips: TeeJet LI-TJ420, "Droplet Size Data Based on
- *     ISO 25358 Standard", 15" tip spacing tank sticker (2022).
- *   - Air blast / directed cone tips: TeeJet CAT52-US section 06, "Air Blast Nozzles".
+ *   - Droplet size grid for boom flat fans: TeeJet LI-TJ420, "Droplet Size Data
+ *     Based on ISO 25358 Standard", 15" tip spacing tank sticker (2022).
+ *   - DG TeeJet and Turbo FloodJet: the droplet size and application rate tables
+ *     on their TeeJet product pages, also ISO 25358.
+ *   - StreamJet SJ3 and SJ7A: TeeJet CAT52-US section 07, "Fertilizer Nozzles".
+ *   - Air blast / directed cone tips and the disc-core reference tables:
+ *     TeeJet CAT52-US section 06, "Air Blast Nozzles".
  *   - Pressure ranges: the recommended pressure range published for each series.
  *
  * Two conventions that the whole calculator relies on:
@@ -12,6 +16,10 @@
  *      flows 0.30 GPM at 40 PSI, and TXA8002 flows 0.20 GPM at 40 PSI.
  *   2. Flow scales with the square root of pressure, so flow at any pressure is
  *      derived rather than stored. Four times the pressure gives twice the flow.
+ *
+ * The streamer bars are the exception to the second rule: TeeJet's published
+ * capacities for them do not follow the square root law, so those tips carry
+ * their printed flow table and are interpolated inside it instead.
  */
 
 export const DROPLET_CLASSES = ['XF', 'VF', 'F', 'M', 'C', 'VC', 'XC', 'UC'];
@@ -263,6 +271,127 @@ const BOOM_SERIES_META = {
 };
 
 /*
+ * Families that do not share the LI-TJ420 grid because they are charted at their
+ * own pressures and their own capacity numbers.
+ *
+ * DG is a pre-orifice flat fan charted from 30 to 60 PSI; the classes below are
+ * the 110 degree column. Turbo FloodJet is a wide angle flooding tip charted
+ * from 10 to 40 PSI; the classes below are the VP polymer column, which reads a
+ * step finer than the stainless one at the top of the range.
+ *
+ * A flooding tip's capacity number is its flow at 10 PSI in tenths of a GPM, not
+ * at 40 PSI, so a TF-2 is 0.40 GPM at 40 PSI rather than 0.20.
+ */
+const FAN_SERIES_META = {
+  dg: {
+    name: 'DG TeeJet (Drift Guard)',
+    partPattern: 'DG110{size}VS',
+    pattern: 'fan',
+    psiMin: 30,
+    psiMax: 60,
+    driftClass: 'moderate',
+    airInduction: false,
+    preOrifice: true,
+    summary:
+      'Pre-orifice flat fan with a tapered edge pattern. Coarse at 30 PSI and medium above 40, which suits soil applied and systemic products. Needs 30 PSI as a floor.',
+    sizes: { '015': 0.15, '02': 0.2, '03': 0.3, '04': 0.4, '05': 0.5 },
+    dropletSteps: [30, 35, 40, 50, 60],
+    droplets: {
+      '015': 'M  M  M  M  F',
+      '02': 'C  C  M  M  M',
+      '03': 'C  C  M  M  M',
+      '04': 'C  C  M  M  M',
+      '05': 'C  C  C  M  M',
+    },
+  },
+  tf: {
+    name: 'TF Turbo FloodJet',
+    partPattern: 'TF-VP{size}',
+    pattern: 'flood',
+    psiMin: 10,
+    psiMax: 40,
+    driftClass: 'high',
+    airInduction: false,
+    preOrifice: true,
+    sprayAngle: '130 degree wide angle flood',
+    summary:
+      'Wide angle flooding tip with a pre-orifice. The traditional fertilizer and soil applied herbicide tip: very coarse to ultra coarse, and a big round orifice that does not plug easily.',
+    sizes: { '2': 0.4, '2.5': 0.5, '3': 0.6, '4': 0.8, '5': 1.0, '7.5': 1.5, '10': 2.0 },
+    dropletSteps: [10, 20, 30, 40],
+    droplets: {
+      '2': 'UC XC VC C',
+      '2.5': 'UC XC VC C',
+      '3': 'UC XC VC VC',
+      '4': 'UC UC XC VC',
+      '5': 'UC UC XC VC',
+      '7.5': 'UC UC XC VC',
+      '10': 'UC UC XC VC',
+    },
+  },
+};
+
+/*
+ * Streamer bars. These put out solid streams rather than a spray, so TeeJet
+ * publishes no droplet classification for them at all: there is nothing to
+ * classify, and drift is close to nil. They are the standard way to put liquid
+ * fertilizer on without burning a standing crop.
+ *
+ * Their published capacities do not follow the square root law, so the printed
+ * table is stored and interpolated rather than derived from the 40 PSI figure.
+ */
+const STREAM_PSI_STEPS = [20, 30, 40, 50, 60];
+
+const STREAM_SERIES_META = {
+  sj3: {
+    name: 'StreamJet SJ3',
+    partPattern: 'SJ3-{size}-VP',
+    pattern: 'stream',
+    streams: 3,
+    psiMin: 20,
+    psiMax: 60,
+    driftClass: 'max',
+    summary:
+      'Three solid streams of equal capacity, aimed between the rows. Built for liquid fertilizer: almost no drift and far less leaf burn than a spray, because the liquid lands in bands instead of coating the plant.',
+    flowSteps: STREAM_PSI_STEPS,
+    flows: {
+      '015': [0.11, 0.13, 0.15, 0.16, 0.17],
+      '02': [0.14, 0.17, 0.2, 0.21, 0.22],
+      '03': [0.24, 0.27, 0.3, 0.33, 0.35],
+      '04': [0.3, 0.36, 0.4, 0.43, 0.47],
+      '05': [0.36, 0.45, 0.5, 0.55, 0.59],
+      '06': [0.42, 0.54, 0.6, 0.66, 0.7],
+      '08': [0.56, 0.72, 0.8, 0.88, 0.94],
+      '10': [0.65, 0.9, 1.0, 1.11, 1.19],
+      '15': [0.99, 1.24, 1.5, 1.68, 1.83],
+      '20': [1.41, 1.75, 2.0, 2.28, 2.49],
+    },
+  },
+  sj7: {
+    name: 'StreamJet SJ7A',
+    partPattern: 'SJ7A-{size}-VP',
+    pattern: 'stream',
+    streams: 7,
+    psiMin: 20,
+    psiMax: 60,
+    driftClass: 'max',
+    summary:
+      'Seven solid streams from one tip, spaced for broadcast rather than directed work. Same drift and burn advantage as the SJ3 with a more even spread across the boom.',
+    flowSteps: STREAM_PSI_STEPS,
+    flows: {
+      '015': [0.1, 0.12, 0.15, 0.16, 0.18],
+      '02': [0.14, 0.17, 0.2, 0.23, 0.25],
+      '03': [0.22, 0.27, 0.3, 0.33, 0.35],
+      '04': [0.3, 0.35, 0.4, 0.43, 0.46],
+      '05': [0.38, 0.45, 0.5, 0.54, 0.58],
+      '06': [0.45, 0.54, 0.6, 0.65, 0.7],
+      '08': [0.57, 0.72, 0.8, 0.87, 0.93],
+      '10': [0.71, 0.9, 1.0, 1.09, 1.16],
+      '15': [1.03, 1.29, 1.5, 1.64, 1.76],
+    },
+  },
+};
+
+/*
  * Air blast and directed cone tips, from CAT52-US section 06.
  * Flow is again nominal GPM at 40 PSI so the square root rule applies, but the
  * published droplet grids are keyed to their own pressure steps.
@@ -355,6 +484,7 @@ function buildBoomTips() {
         seriesId,
         seriesName: meta.name,
         sprayerType: 'boom',
+        pattern: 'fan',
         size,
         gpm40: NOMINAL_GPM[size],
         partNo: meta.partPattern.replace('{size}', size),
@@ -369,6 +499,74 @@ function buildBoomTips() {
         summary: meta.summary,
         droplets,
         dropletPsiSteps: Object.keys(droplets).map(Number),
+      });
+    }
+  }
+  return tips;
+}
+
+/* DG and Turbo FloodJet: own capacities, own charted pressures, still droplets. */
+function buildFanSeriesTips() {
+  const tips = [];
+  for (const [seriesId, meta] of Object.entries(FAN_SERIES_META)) {
+    for (const [size, gpm40] of Object.entries(meta.sizes)) {
+      const classes = parseRow(meta.droplets[size]);
+      const droplets = {};
+      meta.dropletSteps.forEach((psi, index) => {
+        const value = classes[index];
+        if (value && value !== '-') droplets[psi] = value;
+      });
+      tips.push({
+        id: `${seriesId}-${size}`,
+        seriesId,
+        seriesName: meta.name,
+        sprayerType: 'boom',
+        pattern: meta.pattern,
+        size,
+        gpm40,
+        partNo: meta.partPattern.replace('{size}', size),
+        psiMin: meta.psiMin,
+        psiMax: meta.psiMax,
+        driftClass: meta.driftClass,
+        twinFan: false,
+        airInduction: meta.airInduction,
+        preOrifice: meta.preOrifice,
+        sprayAngle: meta.sprayAngle,
+        summary: meta.summary,
+        droplets,
+        dropletPsiSteps: Object.keys(droplets).map(Number),
+      });
+    }
+  }
+  return tips;
+}
+
+/* Streamer bars: a published flow table, no droplet classes. */
+function buildStreamTips() {
+  const tips = [];
+  for (const [seriesId, meta] of Object.entries(STREAM_SERIES_META)) {
+    for (const [size, flows] of Object.entries(meta.flows)) {
+      const flowTable = { psi: meta.flowSteps, gpm: flows };
+      tips.push({
+        id: `${seriesId}-${size}`,
+        seriesId,
+        seriesName: meta.name,
+        sprayerType: 'boom',
+        pattern: 'stream',
+        streams: meta.streams,
+        size,
+        gpm40: flows[meta.flowSteps.indexOf(40)],
+        flowTable,
+        partNo: meta.partPattern.replace('{size}', size),
+        psiMin: meta.psiMin,
+        psiMax: meta.psiMax,
+        driftClass: meta.driftClass,
+        twinFan: false,
+        airInduction: false,
+        preOrifice: false,
+        summary: meta.summary,
+        droplets: {},
+        dropletPsiSteps: [],
       });
     }
   }
@@ -390,6 +588,7 @@ function buildConeTips() {
         seriesId,
         seriesName: meta.name,
         sprayerType: 'airblast',
+        pattern: 'cone',
         size,
         gpm40,
         partNo: meta.partPattern.replace('{size}', size),
@@ -409,9 +608,99 @@ function buildConeTips() {
   return tips;
 }
 
-export const TIPS = [...buildBoomTips(), ...buildConeTips()];
+/*
+ * Disc and core assemblies, CAT52-US section 06. These are the high volume
+ * orchard nozzles: an orifice disc and a swirl core in one body, in far larger
+ * capacities than the moulded cone tips, and rated to 300 PSI.
+ *
+ * TeeJet publishes no droplet classification for them, so they are held apart
+ * from the tips the calculator recommends and offered as a lookup table instead.
+ * Guessing a droplet class for them would be inventing data.
+ */
+const DISC_CORE_PSI_STEPS = [10, 20, 30, 40, 60, 80, 100, 150, 200, 300];
 
-export const SERIES = { ...BOOM_SERIES_META, ...CONE_SERIES_META };
+export const DISC_CORE_SETS = [
+  {
+    id: 'dc25',
+    name: 'D disc with DC25 core',
+    pattern: 'hollow cone',
+    psiMin: 10,
+    psiMax: 300,
+    psiSteps: DISC_CORE_PSI_STEPS,
+    note: 'Hollow cone. The common mid-range air blast combination.',
+    rows: [
+      ['D1-DC25', [null, null, 0.088, 0.101, 0.122, 0.138, 0.156, 0.185, 0.21, 0.255]],
+      ['D1.5-DC25', [null, null, 0.118, 0.135, 0.162, 0.185, 0.205, 0.245, 0.28, 0.33]],
+      ['D2-DC25', [null, 0.12, 0.14, 0.16, 0.19, 0.22, 0.25, 0.29, 0.34, 0.41]],
+      ['D3-DC25', [0.1, 0.14, 0.17, 0.19, 0.23, 0.26, 0.29, 0.35, 0.4, 0.48]],
+      ['D4-DC25', [0.15, 0.21, 0.25, 0.29, 0.35, 0.4, 0.45, 0.54, 0.62, 0.75]],
+      ['D5-DC25', [0.18, 0.25, 0.3, 0.35, 0.42, 0.48, 0.54, 0.65, 0.75, 0.9]],
+      ['D6-DC25', [0.23, 0.32, 0.39, 0.44, 0.54, 0.62, 0.7, 0.85, 0.97, 1.19]],
+      ['D7-DC25', [0.26, 0.37, 0.45, 0.52, 0.63, 0.73, 0.81, 0.98, 1.18, 1.37]],
+      ['D8-DC25', [0.31, 0.43, 0.53, 0.61, 0.75, 0.89, 0.97, 1.19, 1.36, 1.68]],
+      ['D10-DC25', [0.38, 0.54, 0.65, 0.76, 0.93, 1.07, 1.21, 1.48, 1.71, 2.1]],
+      ['D12-DC25', [0.46, 0.61, 0.8, 0.93, 1.15, 1.32, 1.47, 1.81, 2.09, 2.55]],
+      ['D14-DC25', [0.51, 0.72, 0.88, 1.03, 1.26, 1.47, 1.65, 2.02, 2.34, 2.89]],
+    ],
+  },
+  {
+    id: 'dc45',
+    name: 'D disc with DC45 core',
+    pattern: 'hollow cone',
+    psiMin: 10,
+    psiMax: 300,
+    psiSteps: DISC_CORE_PSI_STEPS,
+    note: 'Hollow cone with a tighter angle and more capacity than the DC25 for the same disc.',
+    rows: [
+      ['D1-DC45', [null, null, null, 0.125, 0.148, 0.17, 0.19, 0.225, 0.257, 0.31]],
+      ['D1.5-DC45', [null, null, 0.14, 0.16, 0.2, 0.23, 0.25, 0.31, 0.35, 0.43]],
+      ['D2-DC45', [null, 0.14, 0.18, 0.2, 0.25, 0.28, 0.32, 0.38, 0.44, 0.53]],
+      ['D3-DC45', [null, 0.17, 0.2, 0.23, 0.28, 0.33, 0.36, 0.44, 0.51, 0.62]],
+      ['D4-DC45', [0.18, 0.25, 0.31, 0.36, 0.43, 0.5, 0.56, 0.68, 0.78, 0.95]],
+      ['D5-DC45', [0.23, 0.32, 0.39, 0.45, 0.55, 0.64, 0.71, 0.86, 0.99, 1.22]],
+      ['D6-DC45', [0.29, 0.41, 0.5, 0.58, 0.72, 0.83, 0.93, 1.15, 1.33, 1.64]],
+      ['D7-DC45', [0.33, 0.48, 0.59, 0.68, 0.84, 0.97, 1.11, 1.35, 1.57, 1.94]],
+      ['D8-DC45', [0.41, 0.59, 0.72, 0.84, 1.04, 1.21, 1.35, 1.68, 1.94, 2.4]],
+      ['D10-DC45', [0.54, 0.77, 0.94, 1.1, 1.35, 1.57, 1.77, 2.18, 2.5, 3.1]],
+      ['D12-DC45', [0.67, 0.95, 1.17, 1.36, 1.68, 1.95, 2.2, 2.69, 3.11, 3.8]],
+      ['D14-DC45', [0.75, 1.07, 1.32, 1.53, 1.89, 2.19, 2.45, 3.0, 3.49, 4.3]],
+      ['D16-DC45', [0.86, 1.25, 1.54, 1.79, 2.2, 2.57, 2.89, 3.54, 4.11, 5.2]],
+    ],
+  },
+  {
+    id: 'dc56',
+    name: 'D disc with DC56 core',
+    pattern: 'full cone',
+    psiMin: 10,
+    psiMax: 300,
+    psiSteps: DISC_CORE_PSI_STEPS,
+    note: 'Full cone. The largest capacities TeeJet lists for air blast work.',
+    rows: [
+      ['D2-DC56', [null, null, 0.21, 0.25, 0.3, 0.35, 0.39, 0.47, 0.55, 0.67]],
+      ['D3-DC56', [null, null, 0.29, 0.34, 0.41, 0.48, 0.53, 0.65, 0.75, 0.92]],
+      ['D4-DC56', [null, 0.39, 0.48, 0.55, 0.67, 0.78, 0.87, 1.06, 1.23, 1.51]],
+      ['D5-DC56', [0.38, 0.54, 0.66, 0.76, 0.93, 1.08, 1.2, 1.47, 1.69, 2.08]],
+      ['D6-DC56', [0.55, 0.78, 0.95, 1.1, 1.35, 1.55, 1.74, 2.13, 2.46, 3.02]],
+      ['D7-DC56', [0.76, 1.07, 1.32, 1.52, 1.86, 2.15, 2.4, 2.94, 3.4, 4.16]],
+      ['D8-DC56', [0.96, 1.36, 1.67, 1.93, 2.36, 2.73, 3.05, 3.73, 4.32, 5.28]],
+      ['D10-DC56', [1.35, 1.91, 2.34, 2.7, 3.31, 3.82, 4.26, 5.22, 6.03, 7.39]],
+    ],
+  },
+];
+
+export const TIPS = [
+  ...buildBoomTips(),
+  ...buildFanSeriesTips(),
+  ...buildStreamTips(),
+  ...buildConeTips(),
+];
+
+export const SERIES = {
+  ...BOOM_SERIES_META,
+  ...FAN_SERIES_META,
+  ...STREAM_SERIES_META,
+  ...CONE_SERIES_META,
+};
 
 /* Flow in GPM at any pressure. Flow varies with the square root of pressure. */
 export function flowAtPsi(gpm40, psi) {
@@ -421,6 +710,37 @@ export function flowAtPsi(gpm40, psi) {
 /* Pressure needed to make a tip deliver a given flow. Inverse of flowAtPsi. */
 export function psiForFlow(gpm40, gpm) {
   return 40 * (gpm / gpm40) ** 2;
+}
+
+/*
+ * A tip with a published flow table is read off that table instead, using a
+ * power curve between the two charted pressures either side. Inside a segment
+ * that is exact at both ends, which keeps the numbers the calculator shows
+ * identical to the ones printed in the catalog.
+ */
+function segmentFor(value, list) {
+  let index = 0;
+  while (index < list.length - 2 && value > list[index + 1]) index += 1;
+  return index;
+}
+
+function curveAt(x0, y0, x1, y1, x) {
+  const exponent = Math.log(y1 / y0) / Math.log(x1 / x0);
+  return y0 * (x / x0) ** exponent;
+}
+
+export function tipFlowAtPsi(tip, psi) {
+  const table = tip.flowTable;
+  if (!table) return flowAtPsi(tip.gpm40, psi);
+  const index = segmentFor(psi, table.psi);
+  return curveAt(table.psi[index], table.gpm[index], table.psi[index + 1], table.gpm[index + 1], psi);
+}
+
+export function tipPsiForFlow(tip, gpm) {
+  const table = tip.flowTable;
+  if (!table) return psiForFlow(tip.gpm40, gpm);
+  const index = segmentFor(gpm, table.gpm);
+  return curveAt(table.gpm[index], table.psi[index], table.gpm[index + 1], table.psi[index + 1], gpm);
 }
 
 /*

@@ -143,6 +143,36 @@
                   <span class="field-hint">Orchard practice is 65 to 75 per cent into the top half of the canopy.</span>
                 </label>
 
+                <label class="field" id="solution-field" hidden>
+                  <span class="field-label">Solution weight</span>
+                  <span class="input-wrap">
+                    <input
+                      type="number"
+                      id="solution-weight"
+                      name="solutionLbPerGal"
+                      min="7"
+                      max="15"
+                      step="0.01"
+                      value="8.34"
+                      list="solution-weights"
+                      inputmode="decimal"
+                    />
+                    <span class="unit">lb/gal</span>
+                  </span>
+                  <datalist id="solution-weights">
+                    <option value="8.34" label="Water"></option>
+                    <option value="10.66" label="28% UAN"></option>
+                    <option value="11.06" label="32% UAN"></option>
+                    <option value="11.65" label="10-34-0"></option>
+                    <option value="11.1" label="12-0-0-26 ATS"></option>
+                  </datalist>
+                  <span class="field-hint">
+                    Water is 8.34. 28% UAN is 10.66, 32% UAN is 11.06, 10-34-0 is 11.65, ATS is about 11.1.
+                    Tip charts are printed for water, and a heavier solution flows slower through the same
+                    tip, so the pressure has to be worked out for the weight you are actually putting on.
+                  </span>
+                </label>
+
                 <label class="field">
                   <span class="field-label">Wind speed <span class="optional">optional</span></span>
                   <span class="input-wrap">
@@ -298,7 +328,8 @@
           <p class="muted">
             Every tip the calculator knows about, with its rating, its usable pressure range and the
             published droplet class at each charted pressure. Handy when you are deciding what to keep on
-            the shelf.
+            the shelf. The streamer bars and the disc-core assemblies have no droplet classification
+            published, so those are listed by flow instead.
           </p>
           <label class="field">
             <span class="field-label">Tip family</span>
@@ -331,6 +362,19 @@
                 root of pressure, four times the pressure only doubles the flow, which is why pressure is for
                 small trims and a tip change is for real changes.
               </p>
+              <p class="muted">
+                Streamer bars are the exception. TeeJet's printed capacities for them do not follow the square
+                root law, so those are read straight off the published table instead.
+              </p>
+            </div>
+            <div>
+              <h4>Heavy solutions</h4>
+              <p class="formula">Water equivalent flow = flow you want &times; &radic;(lb per gallon &divide; 8.34)</p>
+              <p class="muted">
+                Flow through an orifice drops with the square root of the liquid's weight, so 28% UAN comes
+                out about 13 per cent slower than water through the same tip at the same pressure. Enter the
+                solution weight on a fertilizer job and the pressure comes back corrected for it.
+              </p>
             </div>
           </div>
         </section>
@@ -338,8 +382,10 @@
         <section class="card tool">
           <h3>Where the data comes from</h3>
           <ul class="source-list">
-            <li>Droplet size classes for boom tips: TeeJet LI-TJ420 droplet size data, ISO 25358 standard, 15 inch tip spacing chart.</li>
-            <li>Air blast cone tips: TeeJet catalog CAT52-US, air blast nozzle section.</li>
+            <li>Droplet size classes for boom flat fans: TeeJet LI-TJ420 droplet size data, ISO 25358 standard, 15 inch tip spacing chart.</li>
+            <li>DG TeeJet and Turbo FloodJet: the droplet size and application rate tables on their TeeJet product pages, also ISO 25358.</li>
+            <li>StreamJet SJ3 and SJ7A capacities: TeeJet catalog CAT52-US, fertilizer nozzle section.</li>
+            <li>Air blast cone tips and the disc-core capacity tables: TeeJet catalog CAT52-US, air blast nozzle section.</li>
             <li>Air blast calibration constants and canopy volume split: university extension orchard sprayer calibration guidance.</li>
           </ul>
           <p class="muted">

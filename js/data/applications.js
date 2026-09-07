@@ -10,6 +10,10 @@
  *
  * idealMin / idealMax are the classes that score best. acceptMin / acceptMax is
  * the wider band that is still allowed, just scored lower.
+ *
+ * patterns says which kinds of tip belong on the job. Flat fans are the default.
+ * Flooding tips join the soil targeted jobs, and streamer bars only ever appear
+ * for fertilizer, because streams put liquid down in bands and cover nothing.
  */
 
 export const SPRAYER_TYPES = {
@@ -38,10 +42,12 @@ export const APPLICATIONS = [
     gpaDefault: 15,
     gpaMin: 10,
     gpaTypical: [10, 20],
-    preferSeries: ['aixr', 'tt', 'ai', 'tti'],
+    patterns: ['fan', 'flood'],
+    preferSeries: ['aixr', 'tt', 'ai', 'tti', 'dg'],
     guidance: [
       'A residual has to reach the soil surface, so coarse droplets are an advantage rather than a compromise.',
       'Keep at least 10 GPA so the coarse droplets still wet the whole soil surface.',
+      'Flooding tips are in the running for this one. They were built for exactly this job, and a wide angle flood pattern covers the soil surface at a low pressure.',
     ],
   },
   {
@@ -74,7 +80,8 @@ export const APPLICATIONS = [
     gpaDefault: 15,
     gpaMin: 10,
     gpaTypical: [10, 20],
-    preferSeries: ['aixr', 'tt', 'ai'],
+    patterns: ['fan', 'flood'],
+    preferSeries: ['aixr', 'tt', 'ai', 'dg'],
     guidance: [
       'Glyphosate type products tolerate medium to coarse droplets well, which is why AIXR is the common choice.',
       'Watch carrier volume rather than droplet size: very high volumes can dilute and reduce activity on some systemic products.',
@@ -152,11 +159,35 @@ export const APPLICATIONS = [
     gpaDefault: 25,
     gpaMin: 15,
     gpaTypical: [20, 40],
-    preferSeries: ['tti', 'ai', 'aixr', 'tt'],
+    patterns: ['fan', 'flood'],
+    preferSeries: ['tf', 'tti', 'ai', 'aixr', 'tt'],
+    solutionWeight: true,
     guidance: [
-      'Coarse droplets keep UAN off the leaves and cut the burn on emerged crops. Streamer bars and flooding tips are the traditional answer and a TTI is the coarsest flat fan alternative.',
-      'UAN is heavier than water. A tip rated in GPM on water delivers less weight-corrected volume, so calibrate with the actual solution, not water.',
+      'Coarse droplets keep UAN off the leaves and cut the burn on emerged crops. A Turbo FloodJet is the traditional answer and a TTI is the coarsest flat fan alternative.',
+      'If the crop is up and burn matters, use the streamed version of this job instead. Streams beat any droplet for keeping fertilizer off the leaf.',
       'Fertilizer solutions are hard on tips. Stainless or ceramic orifices last far longer than polymer.',
+    ],
+  },
+  {
+    id: 'fertilizer_stream',
+    name: 'Liquid fertilizer / UAN streamed',
+    sprayerType: 'boom',
+    blurb: 'Streamer bars lay the fertilizer down in bands, so almost none of it lands on the leaf.',
+    idealMin: 'UC',
+    idealMax: 'UC',
+    acceptMin: 'UC',
+    acceptMax: 'UC',
+    gpaDefault: 25,
+    gpaMin: 10,
+    gpaTypical: [15, 40],
+    patterns: ['stream'],
+    preferSeries: ['sj7', 'sj3'],
+    solutionWeight: true,
+    guidance: [
+      'Solid streams have no droplet size and effectively no drift, and they cut leaf burn on an emerged crop because the liquid lands in bands rather than coating the plant.',
+      'SJ7A puts seven streams across the tip spacing for broadcast work. SJ3 puts three heavier streams down and is the one to use where you want them directed between rows.',
+      'Nothing that has to hit a leaf belongs in a streamed tank. If a herbicide is going along with the fertilizer, it needs a spray tip and this job is the wrong preset.',
+      'Stream height matters more than pressure. TeeJet spaces these for an even pattern at about a 20 inch boom height.',
     ],
   },
   {

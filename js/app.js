@@ -7,7 +7,14 @@
  */
 
 import { APPLICATIONS, SPRAYER_TYPES, applicationsFor, getApplication } from './data/applications.js';
-import { DROPLET_COLORS, DROPLET_NAMES, SERIES, TIPS, flowAtPsi } from './data/nozzles.js';
+import {
+  DISC_CORE_SETS,
+  DROPLET_COLORS,
+  DROPLET_NAMES,
+  SERIES,
+  TIPS,
+  flowAtPsi,
+} from './data/nozzles.js';
 import {
   airblastGpa,
   boomTable,
@@ -209,6 +216,9 @@ function applyJobDefaults() {
 
   const rowSpacing = $('#row-spacing');
   if (state.sprayerType === 'airblast' && !rowSpacing.value) rowSpacing.value = 20;
+
+  /* Only fertilizer jobs care what the tank load weighs. */
+  $('#solution-field').hidden = !(job.solutionWeight && state.sprayerType === 'boom');
 }
 
 function syncFormForSprayer() {
@@ -267,6 +277,7 @@ function readForm() {
   } else {
     input.spacingInches = num($('#spacing'));
     input.tipsPerRow = num($('#tips-per-row')) || 1;
+    if (job?.solutionWeight) input.solutionLbPerGal = num($('#solution-weight'));
   }
 
   const problems = [];
@@ -286,6 +297,19 @@ function readForm() {
 /* ---------------- rendering results ---------------- */
 
 function dropletBadge(dropletClass, exact = true, fromPsi = null) {
+  /* Streamer bars have no droplet spectrum, so there is nothing to classify. */
+  if (!dropletClass) {
+    return el(
+      'span',
+      {
+        class: 'droplet-badge',
+        style: 'color:#2f7fd1;border-color:#2f7fd1;background:#2f7fd11f',
+        title: 'Solid streams. TeeJet publishes no droplet class for a streamer bar because there is no spray to classify.',
+      },
+      el('span', { class: 'droplet-dot', style: 'background:#2f7fd1' }),
+      'Solid stream',
+    );
+  }
   const color = DROPLET_COLORS[dropletClass] || 'var(--line-strong)';
   return el(
     'span',
@@ -363,9 +387,14 @@ function renderResults(output) {
   const container = $('#results');
   container.hidden = false;
 
+  const heavy = output.mode === 'boom' && output.density !== 1;
   const summary =
     output.mode === 'boom'
-      ? `Each tip has to flow ${fmtFixed(output.requiredGpm, 3)} GPM (${fmt(output.requiredOzPerMin)} oz per minute in a catch test). ${output.allConsidered} tips in the catalog can hit that rate inside their own pressure range.`
+      ? `Each tip has to flow ${fmtFixed(output.solutionGpm, 3)} GPM of solution${
+          heavy
+            ? `, and because this load is heavier than water that is ${fmtFixed(output.requiredGpm, 3)} GPM on the water charts the tips are rated on`
+            : ` (${fmt(output.requiredOzPerMin)} oz per minute in a catch test)`
+        }. ${output.allConsidered} tips in the catalog can hit that rate inside their own pressure range.`
       : `The machine has to put out ${fmtFixed(output.requiredTotalGpm, 2)} GPM in total, which is ${fmtFixed(output.requiredPerSideGpm, 2)} GPM per side across ${output.positionsPerSide} positions.`;
   $('#results-summary').textContent =
     output.mode === 'airblast' && output.unreachable
@@ -432,6 +461,7 @@ function renderBoomResult(result, index, output) {
     tip,
     spacingInches: state.lastInput?.spacingInches || 20,
     tipsPerRow: state.lastInput?.tipsPerRow || 1,
+    density: output.density,
   });
 
   const speedWindow = `${fmt(result.range.speedMinAtRate)} to ${fmt(result.range.speedMaxAtRate)} mph`;
@@ -455,9 +485,11 @@ function renderBoomResult(result, index, output) {
 
     readout([
       ['Set pressure', `${result.setPsi} PSI`, `solved: ${fmt(result.psi)} PSI`],
-      ['Flow per tip', `${fmtFixed(result.gpmAtSetPsi, 3)} GPM`, `${fmt(result.ozPerMinAtSetPsi)} oz/min in a jug`],
+      ['Flow per tip', `${fmtFixed(result.gpmAtSetPsi, 3)} GPM`, `${fmt(result.ozPerMinAtSetPsi)} oz/min in a jug of water`],
       ['Rate delivered', `${fmt(result.gpaAtSetPsi)} GPA`, `target ${fmt(state.lastInput?.gpa)} GPA`],
-      ['Droplet class', result.dropletClass, DROPLET_NAMES[result.dropletClass]],
+      result.dropletClass
+        ? ['Droplet class', result.dropletClass, DROPLET_NAMES[result.dropletClass]]
+        : ['Pattern', `${tip.streams} streams`, 'no droplets to classify'],
     ]),
 
     pressureWindowBar(tip, result.psi),
@@ -501,7 +533,7 @@ function renderBoomResult(result, index, output) {
                 { class: Math.abs(row.psi - result.setPsi) <= 2 ? 'is-current' : '' },
                 el('th', { text: String(row.psi) }),
                 el('td', { text: fmtFixed(row.gpm, 3) }),
-                el('td', { text: row.droplet }),
+                el('td', { text: row.droplet || 'stream' }),
                 ...row.gpa.map((gpa) => el('td', { text: fmt(gpa) })),
               ),
             ),
@@ -1402,52 +1434,79 @@ function renderCatalogPicker() {
     ...seriesIds.map((seriesId) =>
       el('option', { value: seriesId, text: `${SERIES[seriesId].name} (${SERIES[seriesId].psiMin}-${SERIES[seriesId].psiMax} PSI)` }),
     ),
+    ...DISC_CORE_SETS.map((set) =>
+      el('option', { value: `disc:${set.id}`, text: `${set.name} (${set.psiMin}-${set.psiMax} PSI)` }),
+    ),
   );
   select.addEventListener('change', renderCatalog);
   renderCatalog();
 }
 
+function catalogTable({ heads, rows, note }) {
+  return [
+    el(
+      'table',
+      {},
+      el('thead', {}, el('tr', {}, ...heads.map((head) => el('th', { text: head })))),
+      el(
+        'tbody',
+        {},
+        ...rows.map((cells) =>
+          el('tr', {}, el('th', { text: cells[0] }), ...cells.slice(1).map((cell) => el('td', { text: cell }))),
+        ),
+      ),
+    ),
+    el('p', { class: 'muted', text: note }),
+  ];
+}
+
 function renderCatalog() {
-  const seriesId = $('#catalog-series').value;
-  const tips = TIPS.filter((tip) => tip.seriesId === seriesId);
+  const value = $('#catalog-series').value;
+
+  if (value.startsWith('disc:')) {
+    const set = DISC_CORE_SETS.find((item) => item.id === value.slice(5));
+    if (!set) return;
+    $('#catalog-output').replaceChildren(
+      ...catalogTable({
+        heads: ['Disc and core', ...set.psiSteps.map((psi) => `${psi}`)],
+        rows: set.rows.map(([partNo, flows]) => [
+          partNo,
+          ...flows.map((gpm) => (gpm === null ? '-' : fmtFixed(gpm, 3))),
+        ]),
+        note: `${set.note} Columns are PSI and cells are GPM per nozzle, straight from the catalog. A dash means TeeJet does not tabulate that combination at that pressure. These are the nozzles to look at when an air blast machine needs more volume than the moulded cone tips can pass, but TeeJet publishes no droplet classification for them, so the calculator will not recommend one.`,
+      }),
+    );
+    return;
+  }
+
+  const tips = TIPS.filter((tip) => tip.seriesId === value);
   if (!tips.length) return;
+  const series = SERIES[value];
+
+  /* Streamer bars are listed by flow because there is no droplet class to list. */
+  if (series.pattern === 'stream') {
+    $('#catalog-output').replaceChildren(
+      ...catalogTable({
+        heads: ['Part number', ...series.flowSteps.map((psi) => `${psi}`)],
+        rows: tips.map((tip) => [tip.partNo, ...tip.flowTable.gpm.map((gpm) => fmtFixed(gpm, 2))]),
+        note: `Columns are PSI and cells are GPM per tip, as published. ${series.streams} solid streams per tip, so there is no droplet class: the liquid lands in bands and drift is close to nil.`,
+      }),
+    );
+    return;
+  }
 
   /* Charted pressures differ between families, so the columns come from the
    * data rather than being fixed. */
   const pressures = [...new Set(tips.flatMap((tip) => tip.dropletPsiSteps))].sort((a, b) => a - b);
-
   $('#catalog-output').replaceChildren(
-    el(
-      'table',
-      {},
-      el(
-        'thead',
-        {},
-        el(
-          'tr',
-          {},
-          el('th', { text: 'Part number' }),
-          el('th', { text: 'GPM at 40' }),
-          ...pressures.map((psi) => el('th', { text: `${psi}` })),
-        ),
-      ),
-      el(
-        'tbody',
-        {},
-        ...tips.map((tip) =>
-          el(
-            'tr',
-            {},
-            el('th', { text: tip.partNo }),
-            el('td', { text: fmtFixed(tip.gpm40, 3) }),
-            ...pressures.map((psi) => el('td', { text: tip.droplets[psi] || '-' })),
-          ),
-        ),
-      ),
-    ),
-    el('p', {
-      class: 'muted',
-      text: `Columns are PSI. Cells are the published droplet class at that pressure, and a dash means that pressure is outside the ${SERIES[seriesId].psiMin} to ${SERIES[seriesId].psiMax} PSI range for this family or the class is not charted.`,
+    ...catalogTable({
+      heads: ['Part number', 'GPM at 40', ...pressures.map((psi) => `${psi}`)],
+      rows: tips.map((tip) => [
+        tip.partNo,
+        fmtFixed(tip.gpm40, 3),
+        ...pressures.map((psi) => tip.droplets[psi] || '-'),
+      ]),
+      note: `Columns are PSI. Cells are the published droplet class at that pressure, and a dash means that pressure is outside the ${series.psiMin} to ${series.psiMax} PSI range for this family or the class is not charted.`,
     }),
   );
 }
@@ -1486,6 +1545,7 @@ const URL_FIELDS = [
   ['pos', '#positions'],
   ['top', '#top-share'],
   ['wind', '#wind'],
+  ['lb', '#solution-weight'],
   ['psimin', '#psi-min'],
   ['psimax', '#psi-max'],
 ];

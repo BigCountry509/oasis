@@ -21,6 +21,8 @@ import {
   dropletIndex,
   flowAtPsi,
   psiForFlow,
+  tipFlowAtPsi,
+  tipPsiForFlow,
 } from './data/nozzles.js';
 import { getApplication } from './data/applications.js';
 
@@ -62,12 +64,27 @@ export function ozPerMinute(gpm) {
   return gpm * 128;
 }
 
+export const WATER_LB_PER_GAL = 8.34;
+
+/*
+ * Tip charts are printed for water. Flow through an orifice falls with the
+ * square root of the liquid's density, so a heavier solution such as UAN comes
+ * out slower at the same pressure. Sizing a tip for it means looking up the
+ * water-equivalent flow, which is the flow you actually want multiplied by the
+ * square root of the specific gravity. This is the same conversion factor TeeJet
+ * tabulates: 28% UAN at 10.66 lb/gal works out at 1.13.
+ */
+export function densityFactor(lbPerGal) {
+  if (!Number.isFinite(lbPerGal) || lbPerGal <= 0) return 1;
+  return Math.sqrt(lbPerGal / WATER_LB_PER_GAL);
+}
+
 /*
  * Tip wear check. A tip is normally retired once it flows more than about 10
  * per cent over its rated output at the pressure you measured it at.
  */
 export function tipWear({ tip, psi, measuredOzPerMin }) {
-  const expectedGpm = flowAtPsi(tip.gpm40, psi);
+  const expectedGpm = tipFlowAtPsi(tip, psi);
   const measuredGpm = measuredOzPerMin / 128;
   const overPercent = ((measuredGpm - expectedGpm) / expectedGpm) * 100;
   return {
@@ -98,6 +115,20 @@ export function tankMath({ tankGallons, gpa, acres, productRatePerAcre }) {
 }
 
 /* ---------- scoring ---------- */
+
+/*
+ * A job is only interested in certain kinds of tip. A flat fan is the default;
+ * flooding tips also suit soil targets and fertilizer, and streamer bars suit
+ * nothing but fertilizer, so they are never offered for a pesticide pass.
+ */
+const DEFAULT_PATTERNS = ['fan'];
+
+function patternAllowed(tip, application) {
+  return (application.patterns || DEFAULT_PATTERNS).includes(tip.pattern);
+}
+
+/* Solid streams have no droplet spectrum to classify or to score. */
+const STREAM_FIT = { fit: 'ideal', score: 55, stepsOff: 0 };
 
 function dropletFit(droplet, application) {
   const index = dropletIndex(droplet);
@@ -173,9 +204,10 @@ export function windDropletFloor(windMph) {
 
 /* ---------- boom recommendation ---------- */
 
-function boomWarnings({ tip, psi, droplet, input, application, requiredGpm }) {
+function boomWarnings({ tip, psi, droplet, input, application, requiredGpm, density }) {
   const warnings = [];
   const { gpa, mph, windMph } = input;
+  const isStream = tip.pattern === 'stream';
 
   if (gpa < application.gpaMin) {
     warnings.push({
@@ -184,11 +216,25 @@ function boomWarnings({ tip, psi, droplet, input, application, requiredGpm }) {
     });
   }
 
+  if (isStream) {
+    warnings.push({
+      level: 'info',
+      text: `${tip.streams} solid streams put the liquid down in bands instead of coating the plant, which is what keeps fertilizer burn down. There is no coverage to speak of, so nothing that has to hit a leaf belongs in this tank.`,
+    });
+  }
+
   const coarseIndex = dropletIndex('VC');
-  if (dropletIndex(droplet.droplet) >= coarseIndex && gpa < 15) {
+  if (!isStream && dropletIndex(droplet.droplet) >= coarseIndex && gpa < 15) {
     warnings.push({
       level: 'warn',
       text: `${droplet.droplet} droplets at only ${gpa} GPA puts very few droplets on each leaf. Lift carrier volume to 15 GPA or more, or pick a finer tip.`,
+    });
+  }
+
+  if (density !== 1) {
+    warnings.push({
+      level: 'info',
+      text: `At ${input.solutionLbPerGal} lb per gallon this solution is heavier than water, so it flows about ${Math.round((1 - 1 / density) * 100)}% slower than the chart through the same tip. The pressure above already allows for that. A catch test run on water will read high by the same amount.`,
     });
   }
 
@@ -213,7 +259,7 @@ function boomWarnings({ tip, psi, droplet, input, application, requiredGpm }) {
   }
 
   const floor = windDropletFloor(windMph);
-  if (floor && dropletIndex(droplet.droplet) < dropletIndex(floor)) {
+  if (!isStream && floor && dropletIndex(droplet.droplet) < dropletIndex(floor)) {
     warnings.push({
       level: 'warn',
       text: `At ${windMph} mph of wind this ${droplet.droplet} spray is drift prone. ${floor} or coarser is the safer call, or wait for the wind to drop.`,
@@ -234,7 +280,7 @@ function boomWarnings({ tip, psi, droplet, input, application, requiredGpm }) {
     });
   }
 
-  if (!droplet.exact) {
+  if (!isStream && !droplet.exact) {
     warnings.push({
       level: 'info',
       text: `TeeJet publishes droplet classes at set pressures. The ${droplet.droplet} shown is the published class at ${droplet.fromPsi} PSI, the nearest step to your ${Math.round(psi)} PSI.`,
@@ -264,12 +310,19 @@ export function recommendBoom(input) {
 
   const spacingInches = input.spacingInches;
   const tipsPerRow = input.tipsPerRow || 1;
-  const requiredGpm = boomFlowPerTip({
+  const solutionGpm = boomFlowPerTip({
     gpa: input.gpa,
     mph: input.mph,
     spacingInches,
     tipsPerRow,
   });
+  /*
+   * Tips are charted on water, so a heavier solution is sized by its water
+   * equivalent flow and the delivered rate is converted back afterwards. With
+   * water in the tank the factor is 1 and nothing changes.
+   */
+  const density = densityFactor(input.solutionLbPerGal);
+  const requiredGpm = solutionGpm * density;
 
   const limitLow = Number.isFinite(input.psiLimitMin) ? input.psiLimitMin : 0;
   const limitHigh = Number.isFinite(input.psiLimitMax) ? input.psiLimitMax : Infinity;
@@ -277,23 +330,25 @@ export function recommendBoom(input) {
   const candidates = [];
   for (const tip of TIPS) {
     if (tip.sprayerType !== 'boom') continue;
+    if (!patternAllowed(tip, application)) continue;
     if (input.seriesFilter?.length && !input.seriesFilter.includes(tip.seriesId)) continue;
 
-    const psi = psiForFlow(tip.gpm40, requiredGpm);
+    const psi = tipPsiForFlow(tip, requiredGpm);
     if (psi < tip.psiMin || psi > tip.psiMax) continue;
     if (psi < limitLow || psi > limitHigh) continue;
 
-    const droplet = dropletAtPsi(tip, psi);
-    if (!droplet.droplet) continue;
+    const isStream = tip.pattern === 'stream';
+    const droplet = isStream ? { droplet: null, fromPsi: null, exact: true } : dropletAtPsi(tip, psi);
+    if (!isStream && !droplet.droplet) continue;
 
-    const fit = dropletFit(droplet.droplet, application);
+    const fit = isStream ? STREAM_FIT : dropletFit(droplet.droplet, application);
     const pressurePoints = pressureScore(tip, psi);
     const driftPoints = driftScore(tip, input.windMph);
     const seriesPoints = seriesScore(tip, application);
     const score = fit.score + pressurePoints + driftPoints + seriesPoints;
 
     const setPsi = Math.round(psi);
-    const gpmAtSetPsi = flowAtPsi(tip.gpm40, setPsi);
+    const gpmAtSetPsi = tipFlowAtPsi(tip, setPsi);
 
     candidates.push({
       tip,
@@ -313,9 +368,9 @@ export function recommendBoom(input) {
       requiredGpm,
       gpmAtSetPsi,
       ozPerMinAtSetPsi: ozPerMinute(gpmAtSetPsi),
-      gpaAtSetPsi: boomGpa({ gpm: gpmAtSetPsi, mph: input.mph, spacingInches, tipsPerRow }),
-      range: boomTipRange({ tip, input, spacingInches, tipsPerRow }),
-      warnings: boomWarnings({ tip, psi, droplet, input, application, requiredGpm }),
+      gpaAtSetPsi: boomGpa({ gpm: gpmAtSetPsi / density, mph: input.mph, spacingInches, tipsPerRow }),
+      range: boomTipRange({ tip, input, spacingInches, tipsPerRow, density }),
+      warnings: boomWarnings({ tip, psi, droplet, input, application, requiredGpm, density }),
     });
   }
 
@@ -329,13 +384,15 @@ export function recommendBoom(input) {
     application,
     requiredGpm,
     requiredOzPerMin: ozPerMinute(requiredGpm),
+    solutionGpm,
+    density,
     windFloor: windDropletFloor(input.windMph),
     results: ranked.slice(0, 6),
     allConsidered: candidates.length,
     noneIdeal: !candidates.some((candidate) => candidate.fit === 'ideal'),
     unreachable: candidates.length
       ? null
-      : boomUnreachable({ input, spacingInches, tipsPerRow, requiredGpm, limitLow, limitHigh }),
+      : boomUnreachable({ input, application, spacingInches, tipsPerRow, requiredGpm, limitLow, limitHigh, density }),
   };
 }
 
@@ -344,10 +401,20 @@ export function recommendBoom(input) {
  * apart for a boom, so say which way and give the speed that fixes it, rather
  * than showing an empty list.
  */
-function boomUnreachable({ input, spacingInches, tipsPerRow, requiredGpm, limitLow, limitHigh }) {
+function boomUnreachable({
+  input,
+  application,
+  spacingInches,
+  tipsPerRow,
+  requiredGpm,
+  limitLow,
+  limitHigh,
+  density = 1,
+}) {
   const boomTips = TIPS.filter(
     (tip) =>
       tip.sprayerType === 'boom' &&
+      patternAllowed(tip, application) &&
       (!input.seriesFilter?.length || input.seriesFilter.includes(tip.seriesId)),
   );
   if (!boomTips.length) return null;
@@ -360,8 +427,8 @@ function boomUnreachable({ input, spacingInches, tipsPerRow, requiredGpm, limitL
     const high = Math.min(tip.psiMax, Number.isFinite(limitHigh) ? limitHigh : tip.psiMax);
     const low = Math.max(tip.psiMin, limitLow || tip.psiMin);
     if (low > high) continue;
-    const flowHigh = flowAtPsi(tip.gpm40, high);
-    const flowLow = flowAtPsi(tip.gpm40, low);
+    const flowHigh = tipFlowAtPsi(tip, high);
+    const flowLow = tipFlowAtPsi(tip, low);
     if (flowHigh > maxFlow) {
       maxFlow = flowHigh;
       biggest = { tip, psi: high };
@@ -375,7 +442,7 @@ function boomUnreachable({ input, spacingInches, tipsPerRow, requiredGpm, limitL
 
   const tooHigh = requiredGpm > maxFlow;
   const bound = tooHigh ? biggest : smallest;
-  const boundFlow = tooHigh ? maxFlow : minFlow;
+  const boundFlow = (tooHigh ? maxFlow : minFlow) / density;
   const gpaAtBound = boomGpa({ gpm: boundFlow, mph: input.mph, spacingInches, tipsPerRow });
   const speedAtBound = boomSpeed({ gpm: boundFlow, gpa: input.gpa, spacingInches, tipsPerRow });
 
@@ -403,9 +470,9 @@ function boomUnreachable({ input, spacingInches, tipsPerRow, requiredGpm, limitL
  * The rate and speed window a tip gives you without changing tips: what GPA it
  * covers at your speed, and what speed it covers at your target rate.
  */
-function boomTipRange({ tip, input, spacingInches, tipsPerRow }) {
-  const flowLow = flowAtPsi(tip.gpm40, tip.psiMin);
-  const flowHigh = flowAtPsi(tip.gpm40, tip.psiMax);
+function boomTipRange({ tip, input, spacingInches, tipsPerRow, density = 1 }) {
+  const flowLow = tipFlowAtPsi(tip, tip.psiMin) / density;
+  const flowHigh = tipFlowAtPsi(tip, tip.psiMax) / density;
   return {
     psiMin: tip.psiMin,
     psiMax: tip.psiMax,
@@ -422,27 +489,31 @@ function boomTipRange({ tip, input, spacingInches, tipsPerRow }) {
  * Pressure and speed table for the chosen tip, so the sheet in the cab covers
  * more than the single setting that was asked for.
  */
-export function boomTable({ tip, spacingInches, tipsPerRow = 1, speeds, pressures }) {
+export function boomTable({ tip, spacingInches, tipsPerRow = 1, speeds, pressures, density = 1 }) {
   const psiList = pressures || defaultPressureSteps(tip);
   const speedList = speeds || [4, 6, 8, 10, 12, 14];
   return {
     speeds: speedList,
     rows: psiList.map((psi) => {
-      const gpm = flowAtPsi(tip.gpm40, psi);
+      const gpm = tipFlowAtPsi(tip, psi);
       const droplet = dropletAtPsi(tip, psi);
       return {
         psi,
         gpm,
         droplet: droplet.droplet,
-        gpa: speedList.map((mph) => boomGpa({ gpm, mph, spacingInches, tipsPerRow })),
+        gpa: speedList.map((mph) => boomGpa({ gpm: gpm / density, mph, spacingInches, tipsPerRow })),
       };
     }),
   };
 }
 
 function defaultPressureSteps(tip) {
-  const steps = [15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 115];
-  return steps.filter((psi) => psi >= tip.psiMin && psi <= tip.psiMax);
+  const steps = [10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 90, 100, 115];
+  const inRange = steps.filter((psi) => psi >= tip.psiMin && psi <= tip.psiMax);
+  /* A charted pressure the tip actually publishes a droplet class for is more
+   * use in the cab than a round number between two of them. */
+  const charted = tip.dropletPsiSteps.filter((psi) => !inRange.includes(psi));
+  return [...inRange, ...charted].sort((a, b) => a - b);
 }
 
 /* ---------- air blast recommendation ---------- */
@@ -473,7 +544,7 @@ function closestTipAtPsi(seriesTips, psi, targetGpm) {
   let best = null;
   for (const tip of seriesTips) {
     if (psi < tip.psiMin || psi > tip.psiMax) continue;
-    const gpm = flowAtPsi(tip.gpm40, psi);
+    const gpm = tipFlowAtPsi(tip, psi);
     const error = Math.abs(gpm - targetGpm) / targetGpm;
     if (!best || error < best.error) best = { tip, gpm, error };
   }
