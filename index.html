@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nozzle Calculator - spray tip selection and spray log</title>
+    <meta
+      name="description"
+      content="Pick a spray job, enter your rate, speed and spacing, and get the recommended TeeJet tip, the pressure to set it at and the droplet size you will get. Keeps a spray record log."
+    />
+    <meta name="theme-color" content="#1c2a22" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="assets/icon-192.png" />
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <img src="assets/icon.svg" alt="" width="34" height="34" />
+          <div>
+            <span class="brand-name">Nozzle Calculator</span>
+            <span class="brand-sub">Spray tip selection &amp; application log</span>
+          </div>
+        </div>
+
+        <nav class="tabs" aria-label="Sections">
+          <button type="button" class="tab is-active" data-view="calculator">Calculator</button>
+          <button type="button" class="tab" data-view="log">Spray log</button>
+          <button type="button" class="tab" data-view="tools">Tools</button>
+        </nav>
+
+        <button type="button" class="account-button" id="account-button">
+          <span id="account-label">Sign in</span>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <!-- ============================ CALCULATOR ============================ -->
+      <section class="view is-active" id="view-calculator">
+        <ol class="steps">
+          <!-- Step 1: sprayer -->
+          <li class="step">
+            <div class="step-head">
+              <span class="step-number">1</span>
+              <h2>What are you spraying with?</h2>
+            </div>
+            <div class="choice-grid" id="sprayer-choices" role="radiogroup" aria-label="Sprayer type"></div>
+          </li>
+
+          <!-- Step 2: job -->
+          <li class="step">
+            <div class="step-head">
+              <span class="step-number">2</span>
+              <h2>What kind of application?</h2>
+            </div>
+            <div class="choice-grid job-grid" id="job-choices" role="radiogroup" aria-label="Application type"></div>
+            <div class="job-notes" id="job-notes" hidden></div>
+          </li>
+
+          <!-- Step 3: options -->
+          <li class="step">
+            <div class="step-head">
+              <span class="step-number">3</span>
+              <h2>Your application settings</h2>
+            </div>
+
+            <form id="calc-form" novalidate>
+              <div class="field-grid">
+                <label class="field">
+                  <span class="field-label">Target rate</span>
+                  <span class="input-wrap">
+                    <input type="number" id="gpa" name="gpa" min="0.5" max="500" step="0.5" inputmode="decimal" required />
+                    <span class="unit">GPA</span>
+                  </span>
+                  <span class="field-hint" id="gpa-hint"></span>
+                </label>
+
+                <label class="field">
+                  <span class="field-label">Ground speed</span>
+                  <span class="input-wrap">
+                    <input type="number" id="mph" name="mph" min="0.5" max="30" step="0.1" inputmode="decimal" required />
+                    <span class="unit">MPH</span>
+                  </span>
+                  <span class="field-hint" id="mph-hint"></span>
+                </label>
+
+                <!-- boom only -->
+                <label class="field boom-only" id="spacing-field">
+                  <span class="field-label" id="spacing-label">Tip spacing</span>
+                  <span class="input-wrap">
+                    <input type="number" id="spacing" name="spacing" min="2" max="120" step="0.5" inputmode="decimal" />
+                    <span class="unit">in</span>
+                  </span>
+                  <span class="field-hint" id="spacing-hint">How far apart the tips are on the boom. 15 and 20 inch are the common spacings.</span>
+                </label>
+
+                <div class="field boom-only span-2" id="coverage-field">
+                  <span class="field-label">How much of the ground are you spraying?</span>
+                  <div class="choice-grid compact" id="coverage-choices" role="radiogroup" aria-label="Boom coverage"></div>
+                </div>
+
+                <label class="field boom-only" id="app-width-field">
+                  <span class="field-label" id="app-width-label">Application width</span>
+                  <span class="input-wrap">
+                    <input type="number" id="app-width" name="applicationWidthFeet" min="0.5" max="200" step="0.5" inputmode="decimal" />
+                    <span class="unit">ft</span>
+                  </span>
+                  <span class="field-hint" id="app-width-hint">How wide the boom is spraying. Tip count comes from this and the tip spacing. You do not count nozzles yourself.</span>
+                </label>
+
+                <label class="field boom-only" id="row-width-field" hidden>
+                  <span class="field-label">Row width</span>
+                  <span class="input-wrap">
+                    <input type="number" id="row-width" name="rowWidthFeet" min="1" max="80" step="0.5" inputmode="decimal" />
+                    <span class="unit">ft</span>
+                  </span>
+                  <span class="field-hint">Centre to centre between rows. The unsprayed middle of the row is skipped.</span>
+                </label>
+
+                <!-- airblast only -->
+                <label class="field airblast-only" hidden>
+                  <span class="field-label">Row spacing</span>
+                  <span class="input-wrap">
+                    <input type="number" id="row-spacing" name="rowSpacingFeet" min="4" max="80" step="0.5" inputmode="decimal" />
+                    <span class="unit">ft</span>
+                  </span>
+                  <span class="field-hint">Centre to centre distance between tree or vine rows.</span>
+                </label>
+
+                <label class="field airblast-only" hidden>
+                  <span class="field-label">Spray pattern</span>
+                  <select id="sides" name="sides">
+                    <option value="both">Both sides in one pass (drive every row middle)</option>
+                    <option value="one">One side per pass (drive both middles)</option>
+                  </select>
+                  <span class="field-hint">Most orchard passes spray both sides at once.</span>
+                </label>
+
+                <label class="field airblast-only" hidden>
+                  <span class="field-label">Nozzle positions per side</span>
+                  <span class="input-wrap">
+                    <input type="number" id="positions" name="positionsPerSide" min="1" max="14" step="1" value="8" inputmode="numeric" />
+                    <span class="unit">each</span>
+                  </span>
+                  <span class="field-hint">A Rears Powerblast commonly has 8 to 12 a side. Count only the ones that hit the tree.</span>
+                </label>
+
+                <label class="field">
+                  <span class="field-label">Wind speed <span class="optional">optional</span></span>
+                  <span class="input-wrap">
+                    <input type="number" id="wind" name="windMph" min="0" max="40" step="1" inputmode="decimal" />
+                    <span class="unit">mph</span>
+                  </span>
+                  <span class="field-hint">Used to push the recommendation coarser when it is breezy.</span>
+                </label>
+              </div>
+
+              <details class="advanced">
+                <summary>Sprayer limits and tips you stock <span class="optional">optional</span></summary>
+                <div class="field-grid">
+                  <label class="field">
+                    <span class="field-label">Lowest pressure you will run</span>
+                    <span class="input-wrap">
+                      <input type="number" id="psi-min" name="psiLimitMin" min="0" max="300" step="1" inputmode="decimal" />
+                      <span class="unit">PSI</span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Highest pressure you will run</span>
+                    <span class="input-wrap">
+                      <input type="number" id="psi-max" name="psiLimitMax" min="0" max="400" step="1" inputmode="decimal" />
+                      <span class="unit">PSI</span>
+                    </span>
+                  </label>
+                </div>
+                <fieldset class="series-filter">
+                  <legend>Limit to these tip families</legend>
+                  <p class="field-hint">Leave everything unticked to search the whole catalog. Tick the families you actually keep on the shelf and it will only recommend those.</p>
+                  <div class="checkbox-grid" id="series-filter"></div>
+                </fieldset>
+              </details>
+
+              <div class="form-actions">
+                <button type="submit" class="primary">Recommend a nozzle</button>
+                <button type="button" class="ghost" id="save-profile">Remember my sprayer</button>
+              </div>
+              <p class="form-message" id="form-message" role="status"></p>
+            </form>
+          </li>
+        </ol>
+
+        <!-- Results -->
+        <section class="results" id="results" hidden>
+          <div class="results-head">
+            <h2>Recommended nozzles</h2>
+            <p id="results-summary"></p>
+          </div>
+          <div id="results-warnings"></div>
+          <div id="results-list"></div>
+        </section>
+      </section>
+
+      <!-- ============================ SPRAY LOG ============================ -->
+      <section class="view" id="view-log">
+        <div class="log-head">
+          <div>
+            <h2>Spray log</h2>
+            <p id="log-scope" class="muted"></p>
+          </div>
+          <div class="log-actions">
+            <button type="button" class="ghost" id="new-record">Add a record</button>
+            <button type="button" class="ghost" id="export-csv">Export CSV</button>
+          </div>
+        </div>
+
+        <div class="log-filter">
+          <input type="search" id="log-search" placeholder="Search by field, crop, product or nozzle" />
+        </div>
+
+        <div id="log-message" class="form-message" role="status"></div>
+        <div id="log-nav" class="log-nav" hidden></div>
+        <div id="record-list"></div>
+      </section>
+
+      <!-- ============================== TOOLS ============================== -->
+      <section class="view" id="view-tools">
+        <h2>Tools</h2>
+
+        <section class="card tool">
+          <h3>Catch test and tip wear</h3>
+          <p class="muted">
+            Run water through one tip for a full minute into a jug, or catch 15 seconds and multiply by four.
+            Compare what you caught against what the tip is rated to flow. A tip more than 10 per cent over is
+            worn out and is putting on more than you think.
+          </p>
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">Tip rating at 40 PSI</span>
+              <span class="input-wrap">
+                <input type="number" id="wear-gpm40" min="0.01" max="10" step="0.01" inputmode="decimal" placeholder="0.30" />
+                <span class="unit">GPM</span>
+              </span>
+              <span class="field-hint">The capacity number on the tip. An 11003 is 0.30, an 11004 is 0.40.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Pressure you tested at</span>
+              <span class="input-wrap">
+                <input type="number" id="wear-psi" min="1" max="400" step="1" inputmode="decimal" placeholder="40" />
+                <span class="unit">PSI</span>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">What you caught</span>
+              <span class="input-wrap">
+                <input type="number" id="wear-measured" min="0" max="500" step="0.1" inputmode="decimal" />
+                <span class="unit">oz/min</span>
+              </span>
+            </label>
+          </div>
+          <div class="tool-output" id="wear-output"></div>
+        </section>
+
+        <section class="card tool">
+          <h3>Tank and acreage</h3>
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">Tank size</span>
+              <span class="input-wrap">
+                <input type="number" id="tank-gallons" min="1" max="10000" step="1" inputmode="decimal" />
+                <span class="unit">gal</span>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Rate</span>
+              <span class="input-wrap">
+                <input type="number" id="tank-gpa" min="0.5" max="500" step="0.5" inputmode="decimal" />
+                <span class="unit">GPA</span>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Acres to cover</span>
+              <span class="input-wrap">
+                <input type="number" id="tank-acres" min="0" max="100000" step="1" inputmode="decimal" />
+                <span class="unit">ac</span>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Product rate per acre <span class="optional">optional</span></span>
+              <span class="input-wrap">
+                <input type="number" id="tank-rate" min="0" max="1000" step="0.1" inputmode="decimal" />
+                <span class="unit">per ac</span>
+              </span>
+            </label>
+          </div>
+          <div class="tool-output" id="tank-output"></div>
+        </section>
+
+        <section class="card tool">
+          <h3>Tip catalog</h3>
+          <p class="muted">
+            Every tip the calculator knows about, with its rating, its usable pressure range and the
+            published droplet class at each charted pressure. Handy when you are deciding what to keep on
+            the shelf. Streamer bars and disc-core nozzles (D3 45 and the rest) have no droplet class
+            published, so those are listed by flow instead.
+          </p>
+          <label class="field">
+            <span class="field-label">Tip family</span>
+            <select id="catalog-series"></select>
+          </label>
+          <div class="table-scroll" id="catalog-output"></div>
+        </section>
+
+        <section class="card tool">
+          <h3>How the numbers are worked out</h3>
+          <div class="formula-list">
+            <div>
+              <h4>Boom sprayer</h4>
+              <p class="formula">GPM per tip = (GPA &times; MPH &times; tip spacing in inches) &divide; 5940</p>
+              <p class="muted">
+                How many tips you need is application width in feet &times; 12, divided by the tip spacing.
+                For a strip or band, application width is only the strip you spray, not the whole row.
+              </p>
+            </div>
+            <div>
+              <h4>Air blast sprayer</h4>
+              <p class="formula">Total GPM = (GPA &times; MPH &times; row spacing in feet) &divide; 495</p>
+              <p class="muted">
+                495 is for spraying both sides of the machine in one pass. Use 990 when you only spray one
+                side per pass and drive both row middles.
+              </p>
+            </div>
+            <div>
+              <h4>Pressure and flow</h4>
+              <p class="formula">Flow at any pressure = rating &times; &radic;(pressure &divide; 40)</p>
+              <p class="muted">
+                Every TeeJet capacity number is the flow in GPM at 40 PSI. Because flow follows the square
+                root of pressure, four times the pressure only doubles the flow, which is why pressure is for
+                small trims and a tip change is for real changes.
+              </p>
+              <p class="muted">
+                Streamer bars and disc-core orchard nozzles are the exception. TeeJet's printed capacities
+                for them do not follow the square root law closely enough, so those are read straight off
+                the published table instead. A D3 45 is a number 3 disc on a 45 core, the combination a
+                Rears Powerblast typically runs.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card tool">
+          <h3>Where the data comes from</h3>
+          <ul class="source-list">
+            <li>Droplet size classes for boom flat fans: TeeJet LI-TJ420 droplet size data, ISO 25358 standard, 15 inch tip spacing chart.</li>
+            <li>DG TeeJet and Turbo FloodJet: the droplet size and application rate tables on their TeeJet product pages, also ISO 25358.</li>
+            <li>StreamJet SJ3 and SJ7A capacities: TeeJet catalog CAT52-US, fertilizer nozzle section.</li>
+            <li>Air blast cone tips and the disc-core capacity tables: TeeJet catalog CAT52-US, air blast nozzle section.</li>
+            <li>Air blast calibration constants and canopy volume split: university extension orchard sprayer calibration guidance.</li>
+          </ul>
+          <p class="muted">
+            Droplet classifications are published at set pressures and against a specific standard, and TeeJet
+            revises them. Always check the chart on the box, and always confirm the tip against the product
+            label before you spray.
+          </p>
+        </section>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        <strong>The label is the law.</strong> This tool does the arithmetic and reads the published tip
+        charts, it does not replace the pesticide label or a catch test. Confirm every setup against the
+        current product label and measure your actual output before you spray.
+      </p>
+    </footer>
+
+    <!-- ============================== DIALOGS ============================== -->
+    <dialog id="account-dialog" class="sheet">
+      <form method="dialog" class="sheet-close"><button aria-label="Close">&times;</button></form>
+      <div id="account-panel"></div>
+    </dialog>
+
+    <dialog id="record-dialog" class="sheet wide">
+      <form method="dialog" class="sheet-close"><button aria-label="Close">&times;</button></form>
+      <h3 id="record-dialog-title">Save this application</h3>
+      <form id="record-form">
+        <div class="field-grid">
+          <label class="field span-2">
+            <span class="field-label">Application name</span>
+            <input type="text" name="name" required placeholder="Home quarter burndown" />
+            <span class="field-hint">Whatever you would call this job when you look it up next year.</span>
+          </label>
+          <label class="field span-2">
+            <span class="field-label">Field</span>
+            <select name="fieldId" id="record-field">
+              <option value="">Not assigned</option>
+            </select>
+            <span class="field-hint" id="record-field-hint">Add every field you have by tapping your name at the top, then pick one here.</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Date applied</span>
+            <input type="date" name="appliedOn" />
+          </label>
+          <label class="field">
+            <span class="field-label">Acres</span>
+            <input type="number" name="acres" min="0" step="0.1" inputmode="decimal" />
+          </label>
+          <label class="field">
+            <span class="field-label">Crop</span>
+            <input type="text" name="crop" placeholder="Soybeans" />
+          </label>
+        </div>
+
+        <fieldset>
+          <legend>Nozzles and settings</legend>
+          <div class="nozzle-summary" id="record-nozzle-summary"></div>
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">Rate</span>
+              <span class="input-wrap">
+                <input type="number" name="gpa" min="0" step="0.1" inputmode="decimal" />
+                <span class="unit">GPA</span>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Speed</span>
+              <span class="input-wrap">
+                <input type="number" name="mph" min="0" step="0.1" inputmode="decimal" />
+                <span class="unit">MPH</span>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Pressure</span>
+              <span class="input-wrap">
+                <input type="number" name="psi" min="0" step="1" inputmode="decimal" />
+                <span class="unit">PSI</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Products in the tank</legend>
+          <div id="product-rows"></div>
+          <button type="button" class="ghost small" id="add-product">Add another product</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Conditions and applicator</legend>
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">Wind</span>
+              <span class="input-wrap">
+                <input type="number" name="windMph" min="0" step="1" inputmode="decimal" />
+                <span class="unit">mph</span>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Wind direction</span>
+              <input type="text" name="windDirection" placeholder="SW" />
+            </label>
+            <label class="field">
+              <span class="field-label">Air temp</span>
+              <span class="input-wrap">
+                <input type="number" name="airTempF" step="1" inputmode="decimal" />
+                <span class="unit">&deg;F</span>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Humidity</span>
+              <span class="input-wrap">
+                <input type="number" name="humidity" min="0" max="100" step="1" inputmode="decimal" />
+                <span class="unit">%</span>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Applicator</span>
+              <input type="text" name="applicator" />
+            </label>
+            <label class="field">
+              <span class="field-label">License number</span>
+              <input type="text" name="licenseNo" />
+            </label>
+          </div>
+        </fieldset>
+
+        <label class="field">
+          <span class="field-label">Notes</span>
+          <textarea name="notes" rows="3" placeholder="Weeds were 4 inch, tank mixed with AMS"></textarea>
+        </label>
+
+        <p class="form-message" id="record-message" role="status"></p>
+        <div class="form-actions">
+          <button type="submit" class="primary">Save to spray log</button>
+          <button type="button" class="ghost" id="record-cancel">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

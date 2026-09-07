@@ -1,0 +1,12 @@
+{
+  "name": "nozzle-calculator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Spray tip selection calculator and application log for boom and air blast sprayers",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "serve": "python3 -m http.server 8080"
+  },
+  "comment": "This file is only here for running the tests and a local dev server. The site itself is plain HTML, CSS and JavaScript with no build step and no dependencies, so hosting it needs nothing but a static web server."
+}

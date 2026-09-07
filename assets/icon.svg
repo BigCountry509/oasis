@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Spray nozzle">
+  <rect width="64" height="64" rx="14" fill="#1a1e17" />
+  <!-- nozzle body and cap -->
+  <rect x="27" y="8" width="10" height="9" rx="2.5" fill="#9ba492" />
+  <rect x="24.5" y="15" width="15" height="5" rx="2.5" fill="#7cc04a" />
+  <!-- flat fan pattern -->
+  <path d="M31 20 L13 44 L51 44 L33 20 Z" fill="#7cc04a" opacity="0.28" />
+  <path d="M31 20 L20 44 M32 20 L32 44 M33 20 L44 44" stroke="#7cc04a" stroke-width="1.6" stroke-linecap="round" opacity="0.75" />
+  <!-- droplets -->
+  <circle cx="17" cy="51" r="3" fill="#7cc04a" />
+  <circle cx="31" cy="54" r="3.6" fill="#7cc04a" />
+  <circle cx="46" cy="51" r="3" fill="#7cc04a" />
+</svg>
