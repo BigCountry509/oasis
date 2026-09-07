@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS spray_records (
   user_id CHAR(36) NOT NULL,
   name VARCHAR(200) NOT NULL,
   applied_on DATE NULL,
+  field_id CHAR(36) NULL,
   field_name VARCHAR(200) NULL,
   acres DECIMAL(10,2) NULL,
   crop VARCHAR(120) NULL,
@@ -66,5 +67,17 @@ CREATE TABLE IF NOT EXISTS spray_records (
   calc LONGTEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY spray_records_user_date_idx (user_id, applied_on),
+  KEY spray_records_field_idx (field_id),
   CONSTRAINT spray_records_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS fields (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  user_id CHAR(36) NOT NULL,
+  name VARCHAR(200) NOT NULL,
+  acres DECIMAL(10,2) NULL,
+  crop VARCHAR(120) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY fields_user_idx (user_id),
+  CONSTRAINT fields_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -217,10 +217,11 @@
         </div>
 
         <div class="log-filter">
-          <input type="search" id="log-search" placeholder="Search by name, field, product or nozzle" />
+          <input type="search" id="log-search" placeholder="Search by field, crop, product or nozzle" />
         </div>
 
         <div id="log-message" class="form-message" role="status"></div>
+        <div id="log-nav" class="log-nav" hidden></div>
         <div id="record-list"></div>
       </section>
 
@@ -392,13 +393,16 @@
             <input type="text" name="name" required placeholder="Home quarter burndown" />
             <span class="field-hint">Whatever you would call this job when you look it up next year.</span>
           </label>
+          <label class="field span-2">
+            <span class="field-label">Field</span>
+            <select name="fieldId" id="record-field">
+              <option value="">Not assigned</option>
+            </select>
+            <span class="field-hint" id="record-field-hint">Add fields by tapping your name at the top, then pick one here when you log a spray.</span>
+          </label>
           <label class="field">
             <span class="field-label">Date applied</span>
             <input type="date" name="appliedOn" />
-          </label>
-          <label class="field">
-            <span class="field-label">Field or block</span>
-            <input type="text" name="fieldName" placeholder="North 80" />
           </label>
           <label class="field">
             <span class="field-label">Acres</span>

@@ -16,6 +16,7 @@ create table if not exists public.spray_records (
   applied_on date,
 
   -- where
+  field_id uuid,
   field_name text,
   acres numeric,
   crop text,
@@ -59,6 +60,9 @@ create table if not exists public.spray_records (
 create index if not exists spray_records_user_date_idx
   on public.spray_records (user_id, applied_on desc);
 
+alter table public.spray_records add column if not exists field_id uuid;
+create index if not exists spray_records_field_idx on public.spray_records (field_id);
+
 alter table public.spray_records enable row level security;
 
 -- One policy per action so the intent is explicit: a signed in user can read and
@@ -82,4 +86,38 @@ create policy spray_records_update_own
 drop policy if exists spray_records_delete_own on public.spray_records;
 create policy spray_records_delete_own
   on public.spray_records for delete
+  using (auth.uid() = user_id);
+
+create table if not exists public.fields (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  name text not null,
+  acres numeric,
+  crop text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists fields_user_idx on public.fields (user_id);
+
+alter table public.fields enable row level security;
+
+drop policy if exists fields_select_own on public.fields;
+create policy fields_select_own
+  on public.fields for select
+  using (auth.uid() = user_id);
+
+drop policy if exists fields_insert_own on public.fields;
+create policy fields_insert_own
+  on public.fields for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists fields_update_own on public.fields;
+create policy fields_update_own
+  on public.fields for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists fields_delete_own on public.fields;
+create policy fields_delete_own
+  on public.fields for delete
   using (auth.uid() = user_id);

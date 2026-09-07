@@ -8,7 +8,7 @@
  *            and a password.
  *
  *   mysql  - the intended setup on a host like Pterodactyl. Fill in
- *            api/config.php and run mysql/schema.sql. Accounts and spray
+ *            api/config.php and run mysql/schema.sql. Accounts, fields and spray
  *            records live in MySQL, so the same log is on every phone and
  *            computer. A device stays signed in for a year unless the
  *            password is reset, which signs every device out. Writes made
@@ -29,6 +29,7 @@ const KEYS = {
   accounts: 'nozzlecalc.accounts',
   session: 'nozzlecalc.session',
   records: (accountId) => `nozzlecalc.records.${accountId}`,
+  fields: (accountId) => `nozzlecalc.fields.${accountId}`,
   profile: (accountId) => `nozzlecalc.profile.${accountId}`,
   outbox: 'nozzlecalc.outbox',
 };
@@ -505,14 +506,25 @@ export async function deleteLocalAccount(accountId) {
   const accounts = readJson(KEYS.accounts, []).filter((account) => account.id !== accountId);
   writeJson(KEYS.accounts, accounts);
   localStorage.removeItem(KEYS.records(accountId));
+  localStorage.removeItem(KEYS.fields(accountId));
   localStorage.removeItem(KEYS.profile(accountId));
   if (session?.accountId === accountId) setSession(null);
 }
 
-/* ---------- spray records ---------- */
+/* ---------- farm fields ---------- */
+
+export function emptyField() {
+  return {
+    id: '',
+    name: '',
+    acres: null,
+    crop: '',
+    createdAt: '',
+  };
+}
 
 /*
- * The stored fields cover what a pesticide application record is normally
+ * The stored record covers what a pesticide application log is normally
  * expected to show: what was applied, where, when, how much, by whom, on what
  * equipment and in what weather.
  */
@@ -521,6 +533,7 @@ export function emptyRecord() {
     id: null,
     name: '',
     appliedOn: new Date().toISOString().slice(0, 10),
+    fieldId: '',
     fieldName: '',
     acres: null,
     crop: '',
@@ -550,6 +563,7 @@ const RECORD_TO_ROW = {
   id: 'id',
   name: 'name',
   appliedOn: 'applied_on',
+  fieldId: 'field_id',
   fieldName: 'field_name',
   acres: 'acres',
   crop: 'crop',
@@ -590,6 +604,7 @@ function fromRow(row) {
   for (const [key, column] of Object.entries(RECORD_TO_ROW)) {
     record[key] = row[column] ?? null;
   }
+  record.fieldId = record.fieldId || '';
   record.nozzles = row.nozzles || [];
   record.products = row.products || [];
   return record;
@@ -597,6 +612,75 @@ function fromRow(row) {
 
 function localRecords() {
   return readJson(KEYS.records(activeAccountId()), []);
+}
+
+function localFields() {
+  return readJson(KEYS.fields(activeAccountId()), []);
+}
+
+function sortFields(fields) {
+  return [...fields].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
+}
+
+function fromField(row) {
+  if (!row) return emptyField();
+  const acres = Number.parseFloat(row.acres);
+  return {
+    id: row.id || '',
+    name: row.name || '',
+    acres: Number.isFinite(acres) ? acres : null,
+    crop: row.crop || '',
+    createdAt: row.createdAt || row.created_at || '',
+  };
+}
+
+export async function listFields() {
+  if (BACKEND === 'mysql' && session?.mode === 'mysql') {
+    const payload = await api('fields', { method: 'GET' });
+    return sortFields((payload.fields || []).map(fromField));
+  }
+  return sortFields(localFields().map(fromField));
+}
+
+export async function saveField(field) {
+  const next = {
+    ...emptyField(),
+    ...field,
+    name: String(field?.name || '').trim(),
+    crop: String(field?.crop || '').trim(),
+  };
+  if (!next.name) throw new Error('Give the field a name.');
+  if (!next.id) next.id = newId();
+  if (!next.createdAt) next.createdAt = new Date().toISOString();
+  const acres = Number.parseFloat(next.acres);
+  next.acres = Number.isFinite(acres) ? acres : null;
+
+  if (BACKEND === 'mysql' && session?.mode === 'mysql') {
+    const payload = await api('save-field', { body: { field: next } });
+    return fromField(payload.field);
+  }
+
+  const fields = localFields();
+  const index = fields.findIndex((item) => item.id === next.id);
+  if (index >= 0) fields[index] = next;
+  else fields.push(next);
+  writeJson(KEYS.fields(activeAccountId()), fields);
+  return next;
+}
+
+export async function deleteField(fieldId) {
+  if (BACKEND === 'mysql' && session?.mode === 'mysql') {
+    await api('delete-field', { body: { id: fieldId, fieldId } });
+    return;
+  }
+  writeJson(
+    KEYS.fields(activeAccountId()),
+    localFields().filter((item) => item.id !== fieldId),
+  );
+  const records = localRecords().map((item) =>
+    item.fieldId === fieldId ? { ...item, fieldId: '' } : item,
+  );
+  writeJson(KEYS.records(activeAccountId()), records);
 }
 
 function sortRecords(records) {

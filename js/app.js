@@ -91,8 +91,12 @@ const state = {
   output: null,
   draft: null,
   records: [],
+  fields: [],
   recordFilter: '',
+  logFieldId: null,
 };
+
+const UNASSIGNED_FIELD = '__none__';
 
 let pendingResetToken = '';
 
@@ -960,11 +964,23 @@ function round(value, decimals) {
 
 /* ---------------- record dialog ---------------- */
 
-function openRecordDialog(draft) {
+async function openRecordDialog(draft) {
   state.draft = draft;
   const dialog = $('#record-dialog');
   const form = $('#record-form');
   form.reset();
+
+  try {
+    state.fields = await store.listFields();
+  } catch {
+    /* Picker still works with whatever fields we already have. */
+  }
+
+  fillRecordFieldSelect(draft.fieldId || matchFieldId(draft) || '');
+  const hint = $('#record-field-hint');
+  hint.textContent = state.fields.length
+    ? 'Acres and crop fill in from the field. You can still change them for this spray.'
+    : 'Add fields by tapping your name at the top, then pick one here when you log a spray.';
 
   $('#record-dialog-title').textContent = draft.id ? 'Edit this record' : 'Save this application';
 
@@ -1009,7 +1025,45 @@ function openRecordDialog(draft) {
 
   renderProductRows(draft.products?.length ? draft.products : [{}]);
   message($('#record-message'), '');
+  applySelectedFieldToForm({ overwrite: !draft.id || !draft.acres });
   dialog.showModal();
+}
+
+function fillRecordFieldSelect(selectedId) {
+  const select = $('#record-field');
+  select.replaceChildren(
+    el('option', { value: '', text: 'Not assigned' }),
+    ...state.fields.map((field) =>
+      el('option', {
+        value: field.id,
+        text: fieldCardLabel(field),
+      }),
+    ),
+  );
+  if (selectedId && [...select.options].some((option) => option.value === selectedId)) {
+    select.value = selectedId;
+  } else {
+    select.value = '';
+  }
+}
+
+function fieldCardLabel(field) {
+  const bits = [field.name];
+  if (Number.isFinite(field.acres)) bits.push(`${fmt(field.acres)} ac`);
+  if (field.crop) bits.push(field.crop);
+  return bits.join(' · ');
+}
+
+function applySelectedFieldToForm({ overwrite = true } = {}) {
+  const form = $('#record-form');
+  const field = state.fields.find((item) => item.id === form.elements.fieldId.value);
+  if (!field) return;
+  if (overwrite || form.elements.acres.value === '') {
+    form.elements.acres.value = Number.isFinite(field.acres) ? field.acres : '';
+  }
+  if (overwrite || form.elements.crop.value === '') {
+    form.elements.crop.value = field.crop || '';
+  }
 }
 
 function renderProductRows(products) {
@@ -1085,6 +1139,15 @@ async function submitRecord(event) {
     const value = Number.parseFloat(record[key]);
     record[key] = Number.isFinite(value) ? value : null;
   }
+  record.fieldId = data.fieldId || '';
+  const assigned = state.fields.find((item) => item.id === record.fieldId);
+  if (assigned) {
+    record.fieldName = assigned.name;
+    if (record.crop === '' && assigned.crop) record.crop = assigned.crop;
+    if (record.acres === null && Number.isFinite(assigned.acres)) record.acres = assigned.acres;
+  } else {
+    record.fieldId = '';
+  }
   if (!record.name?.trim()) {
     record.name = form.elements.name.placeholder || 'Untitled application';
   }
@@ -1092,6 +1155,7 @@ async function submitRecord(event) {
   try {
     const { queued } = await store.saveRecord(record);
     $('#record-dialog').close();
+    state.logFieldId = record.fieldId || UNASSIGNED_FIELD;
     await refreshRecords();
     switchView('log');
     message(
@@ -1109,10 +1173,18 @@ async function submitRecord(event) {
 
 async function refreshRecords() {
   try {
-    state.records = await store.listRecords();
+    const [records, fields] = await Promise.all([
+      store.listRecords(),
+      store.listFields().catch(() => []),
+    ]);
+    state.records = records;
+    state.fields = fields;
   } catch (error) {
     state.records = [];
     message($('#log-message'), `Could not load records: ${error.message}`, true);
+  }
+  if (state.logFieldId && state.logFieldId !== UNASSIGNED_FIELD) {
+    if (!state.fields.some((field) => field.id === state.logFieldId)) state.logFieldId = null;
   }
   renderRecords();
   renderScope();
@@ -1151,9 +1223,99 @@ function matchesFilter(record, filter) {
   return haystack.includes(filter.toLowerCase());
 }
 
+function matchFieldId(record) {
+  if (record?.fieldId) return record.fieldId;
+  const name = (record?.fieldName || '').trim().toLowerCase();
+  if (!name) return '';
+  return state.fields.find((field) => field.name.trim().toLowerCase() === name)?.id || '';
+}
+
+function recordsForField(fieldId) {
+  if (fieldId === UNASSIGNED_FIELD) {
+    return state.records.filter((record) => !matchFieldId(record));
+  }
+  return state.records.filter((record) => matchFieldId(record) === fieldId);
+}
+
+function fieldMatchesFilter(field, records, filter) {
+  if (!filter) return true;
+  const haystack = [field.name, field.crop, field.acres].filter(Boolean).join(' ').toLowerCase();
+  if (haystack.includes(filter.toLowerCase())) return true;
+  return records.some((record) => matchesFilter(record, filter));
+}
+
+function fieldDisplayName(record) {
+  const field = state.fields.find((item) => item.id === matchFieldId(record));
+  return field?.name || record.fieldName || '';
+}
+
+function openNewRecord() {
+  const draft = store.emptyRecord();
+  if (state.logFieldId && state.logFieldId !== UNASSIGNED_FIELD) {
+    const field = state.fields.find((item) => item.id === state.logFieldId);
+    if (field) {
+      draft.fieldId = field.id;
+      draft.fieldName = field.name;
+      draft.acres = field.acres;
+      draft.crop = field.crop;
+    }
+  }
+  openRecordDialog(draft);
+}
+
+function renderLogNav() {
+  const nav = $('#log-nav');
+  if (!state.logFieldId) {
+    fill(nav);
+    nav.hidden = true;
+    return;
+  }
+  nav.hidden = false;
+  const field =
+    state.logFieldId === UNASSIGNED_FIELD
+      ? null
+      : state.fields.find((item) => item.id === state.logFieldId);
+  fill(
+    nav,
+    el('button', {
+      type: 'button',
+      class: 'ghost small',
+      text: 'All fields',
+      onClick: () => {
+        state.logFieldId = null;
+        renderRecords();
+      },
+    }),
+    el('h3', {
+      class: 'log-field-title',
+      text: field ? field.name : 'Not assigned',
+    }),
+    field
+      ? el('p', {
+          class: 'muted',
+          text: [Number.isFinite(field.acres) ? `${fmt(field.acres)} acres` : null, field.crop]
+            .filter(Boolean)
+            .join(' · '),
+        })
+      : el('p', {
+          class: 'muted',
+          text: 'Sprays that were not assigned to a field.',
+        }),
+  );
+}
+
 function renderRecords() {
   const container = $('#record-list');
-  const visible = state.records.filter((record) => matchesFilter(record, state.recordFilter));
+  renderLogNav();
+
+  if (!state.logFieldId) {
+    renderFieldCards(container);
+    return;
+  }
+
+  const visible = recordsForField(state.logFieldId).filter((record) =>
+    matchesFilter(record, state.recordFilter),
+  );
 
   if (!visible.length) {
     container.replaceChildren(
@@ -1161,15 +1323,15 @@ function renderRecords() {
         'div',
         { class: 'empty' },
         el('p', {
-          text: state.records.length
-            ? 'No records match that search.'
-            : 'No spray records yet.',
+          text: state.recordFilter
+            ? 'No sprays match that search in this field.'
+            : 'No sprays on this field yet.',
         }),
         el('p', {
           class: 'muted',
-          text: state.records.length
-            ? 'Clear the search to see the rest of the log.'
-            : 'Run a nozzle recommendation and use "Save this application to the log", or add a record by hand.',
+          text: state.recordFilter
+            ? 'Clear the search to see the rest of this field.'
+            : 'Add a record and pick this field, or save a nozzle recommendation to the log.',
         }),
       ),
     );
@@ -1177,6 +1339,88 @@ function renderRecords() {
   }
 
   container.replaceChildren(...visible.map((record) => renderRecord(record)));
+}
+
+function renderFieldCards(container) {
+  const unassigned = recordsForField(UNASSIGNED_FIELD);
+  const cards = [];
+
+  for (const field of state.fields) {
+    const records = recordsForField(field.id);
+    if (!fieldMatchesFilter(field, records, state.recordFilter)) continue;
+    cards.push(farmFieldCard(field, records));
+  }
+
+  if (unassigned.length && fieldMatchesFilter({ name: 'Not assigned', crop: '', acres: null }, unassigned, state.recordFilter)) {
+    cards.push(
+      farmFieldCard(
+        {
+          id: UNASSIGNED_FIELD,
+          name: 'Not assigned',
+          acres: null,
+          crop: '',
+        },
+        unassigned,
+        true,
+      ),
+    );
+  }
+
+  if (!cards.length) {
+    container.replaceChildren(
+      el(
+        'div',
+        { class: 'empty' },
+        el('p', {
+          text: state.recordFilter
+            ? 'Nothing matches that search.'
+            : state.fields.length
+              ? 'No sprays in these fields yet.'
+              : 'No fields yet.',
+        }),
+        el('p', {
+          class: 'muted',
+          text: state.recordFilter
+            ? 'Clear the search to see the rest of the log.'
+            : 'Tap your name at the top to add a field (name, acres, and what is in it). When you log a spray you pick that field, then it shows up here.',
+        }),
+      ),
+    );
+    return;
+  }
+
+  container.replaceChildren(...cards);
+}
+
+function farmFieldCard(field, records, unassigned = false) {
+  const latest = records[0];
+  return el(
+    'button',
+    {
+      type: 'button',
+      class: unassigned ? 'farm-field is-unassigned' : 'farm-field',
+      onClick: () => {
+        state.logFieldId = field.id;
+        renderRecords();
+      },
+    },
+    el(
+      'div',
+      { class: 'record-head' },
+      el('span', { class: 'record-name', text: field.name }),
+      el('span', { class: 'record-date', text: latest?.appliedOn || 'No sprays yet' }),
+    ),
+    el(
+      'div',
+      { class: 'record-meta' },
+      Number.isFinite(field.acres) ? el('span', { class: 'chip', text: `${fmt(field.acres)} ac` }) : null,
+      field.crop ? el('span', { class: 'chip', text: field.crop }) : null,
+      el('span', {
+        class: 'chip',
+        text: records.length === 1 ? '1 spray' : `${records.length} sprays`,
+      }),
+    ),
+  );
 }
 
 function renderRecord(record) {
@@ -1195,7 +1439,8 @@ function renderRecord(record) {
   );
 
   const details = [];
-  if (record.fieldName) details.push(['Field', record.fieldName]);
+  const fieldName = fieldDisplayName(record);
+  if (fieldName) details.push(['Field', fieldName]);
   if (record.crop) details.push(['Crop', record.crop]);
   if (record.applicationName) details.push(['Job type', record.applicationName]);
   if (record.spacingInches) details.push(['Tip spacing', `${fmt(record.spacingInches)} in`]);
@@ -1284,11 +1529,12 @@ function renderRecord(record) {
 }
 
 function exportCsv() {
-  if (!state.records.length) {
+  const records = state.logFieldId ? recordsForField(state.logFieldId) : state.records;
+  if (!records.length) {
     message($('#log-message'), 'Nothing to export yet.', true);
     return;
   }
-  const csv = store.recordsToCsv(state.records);
+  const csv = store.recordsToCsv(records);
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = el('a', {
@@ -1299,7 +1545,7 @@ function exportCsv() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-  message($('#log-message'), `Exported ${state.records.length} records.`);
+  message($('#log-message'), `Exported ${records.length} records.`);
 }
 
 /* ---------------- accounts ---------------- */
@@ -1333,6 +1579,7 @@ function renderAccountPanel(mode = 'signin') {
       store.accountsAreShared() && store.outboxCount()
         ? el('p', { class: 'muted', text: `${store.outboxCount()} record(s) waiting to upload.` })
         : null,
+      el('div', { id: 'account-fields' }),
       el(
         'div',
         { class: 'form-actions' },
@@ -1342,6 +1589,8 @@ function renderAccountPanel(mode = 'signin') {
           text: 'Sign out',
           onClick: async () => {
             await store.signOut();
+            state.fields = [];
+            state.logFieldId = null;
             renderAccountButton();
             renderAccountPanel();
             await refreshRecords();
@@ -1355,6 +1604,8 @@ function renderAccountPanel(mode = 'signin') {
               onClick: async () => {
                 if (!confirm(`Delete ${session.name} and every record saved under it on this device?`)) return;
                 await store.deleteLocalAccount(session.accountId);
+                state.fields = [];
+                state.logFieldId = null;
                 renderAccountButton();
                 renderAccountPanel();
                 await refreshRecords();
@@ -1363,6 +1614,7 @@ function renderAccountPanel(mode = 'signin') {
           : null,
       ),
     );
+    renderAccountFields();
     return;
   }
 
@@ -1413,6 +1665,122 @@ function renderAccountPanel(mode = 'signin') {
         : mode === 'reset-confirm'
           ? resetConfirmForm()
           : signInForm(),
+  );
+}
+
+async function renderAccountFields() {
+  const wrap = $('#account-fields');
+  if (!wrap) return;
+  fill(wrap, el('p', { class: 'muted', text: 'Loading fields…' }));
+  try {
+    state.fields = await store.listFields();
+  } catch (error) {
+    fill(wrap, el('p', { class: 'form-message is-error', text: error.message }));
+    return;
+  }
+
+  fill(
+    wrap,
+    el('h4', { class: 'account-fields-title', text: 'Your fields' }),
+    el('p', {
+      class: 'muted',
+      text: 'Give each field a name, the acres, and what is in it. When you log a spray you pick one of these. The spray log is grouped by field.',
+    }),
+    state.fields.length
+      ? el('div', { class: 'account-field-list' }, ...state.fields.map((field) => accountFieldRow(field)))
+      : el('p', { class: 'muted', text: 'No fields yet. Add one below.' }),
+    accountFieldForm(),
+  );
+}
+
+function accountFieldRow(field) {
+  return el(
+    'div',
+    { class: 'account-field-row' },
+    el(
+      'div',
+      {},
+      el('strong', { text: field.name }),
+      el('p', {
+        class: 'muted',
+        style: 'margin:.15rem 0 0',
+        text: [Number.isFinite(field.acres) ? `${fmt(field.acres)} acres` : null, field.crop]
+          .filter(Boolean)
+          .join(' · ') || 'No acres or crop set',
+      }),
+    ),
+    el('button', {
+      type: 'button',
+      class: 'ghost small danger',
+      text: 'Delete',
+      onClick: async () => {
+        if (!confirm(`Delete ${field.name}? Sprays on it stay in the log, they just will not be assigned to a field.`)) {
+          return;
+        }
+        try {
+          await store.deleteField(field.id);
+          if (state.logFieldId === field.id) state.logFieldId = null;
+          await renderAccountFields();
+          await refreshRecords();
+        } catch (error) {
+          message($('#field-form-message'), error.message, true);
+        }
+      },
+    }),
+  );
+}
+
+function accountFieldForm() {
+  const messageNode = el('p', { class: 'form-message', id: 'field-form-message' });
+  return el(
+    'form',
+    {
+      class: 'account-field-form',
+      onSubmit: async (event) => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(event.target).entries());
+        try {
+          await store.saveField({
+            name: data.name,
+            acres: data.acres,
+            crop: data.crop,
+          });
+          await renderAccountFields();
+          await refreshRecords();
+          message($('#field-form-message'), 'Field saved. It will show up when you log a spray.');
+        } catch (error) {
+          message(messageNode, error.message, true);
+        }
+      },
+    },
+    el(
+      'label',
+      { class: 'field' },
+      el('span', { class: 'field-label', text: 'Field name' }),
+      el('input', { type: 'text', name: 'name', required: true, placeholder: 'North 80' }),
+    ),
+    el(
+      'div',
+      { class: 'field-grid', style: 'margin-top:.7rem' },
+      el(
+        'label',
+        { class: 'field' },
+        el('span', { class: 'field-label', text: 'Acres' }),
+        el('input', { type: 'number', name: 'acres', min: '0', step: '0.1', inputmode: 'decimal', placeholder: '80' }),
+      ),
+      el(
+        'label',
+        { class: 'field' },
+        el('span', { class: 'field-label', text: 'What is it' }),
+        el('input', { type: 'text', name: 'crop', placeholder: 'Corn, cherries, pasture…' }),
+      ),
+    ),
+    messageNode,
+    el(
+      'div',
+      { class: 'form-actions' },
+      el('button', { type: 'submit', class: 'primary', text: 'Save field' }),
+    ),
   );
 }
 
@@ -1977,12 +2345,13 @@ async function init() {
   $('#record-form').addEventListener('submit', submitRecord);
   $('#record-cancel').addEventListener('click', () => $('#record-dialog').close());
   $('#add-product').addEventListener('click', () => $('#product-rows').append(productRow()));
-  $('#new-record').addEventListener('click', () => openRecordDialog(store.emptyRecord()));
+  $('#new-record').addEventListener('click', openNewRecord);
   $('#export-csv').addEventListener('click', exportCsv);
   $('#log-search').addEventListener('input', (event) => {
     state.recordFilter = event.target.value;
     renderRecords();
   });
+  $('#record-field').addEventListener('change', () => applySelectedFieldToForm({ overwrite: true }));
 
   ['#wear-gpm40', '#wear-psi', '#wear-measured'].forEach((selector) => {
     $(selector).addEventListener('input', runWearTool);

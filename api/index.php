@@ -148,6 +148,7 @@ function record_from_row($row) {
     'id' => $row['id'],
     'name' => $row['name'],
     'applied_on' => $row['applied_on'],
+    'field_id' => $row['field_id'] ?? null,
     'field_name' => $row['field_name'],
     'acres' => $row['acres'] !== null ? (float) $row['acres'] : null,
     'crop' => $row['crop'],
@@ -174,6 +175,38 @@ function record_from_row($row) {
   ];
 }
 
+function field_from_row($row) {
+  return [
+    'id' => $row['id'],
+    'name' => $row['name'],
+    'acres' => $row['acres'] !== null ? (float) $row['acres'] : null,
+    'crop' => $row['crop'],
+    'created_at' => $row['created_at'],
+  ];
+}
+
+function ensure_schema($pdo) {
+  $pdo->exec(
+    'CREATE TABLE IF NOT EXISTS fields (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      user_id CHAR(36) NOT NULL,
+      name VARCHAR(200) NOT NULL,
+      acres DECIMAL(10,2) NULL,
+      crop VARCHAR(120) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY fields_user_idx (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+  );
+  $has = $pdo->query(
+    "SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'spray_records' AND COLUMN_NAME = 'field_id'"
+  )->fetchColumn();
+  if ((int) $has === 0) {
+    $pdo->exec('ALTER TABLE spray_records ADD COLUMN field_id CHAR(36) NULL AFTER field_name');
+    $pdo->exec('ALTER TABLE spray_records ADD KEY spray_records_field_idx (field_id)');
+  }
+}
+
 $body = read_json_body();
 $action = $_GET['action'] ?? $body['action'] ?? '';
 
@@ -182,7 +215,9 @@ try {
     if (!configured($config)) {
       json_out(200, ['ok' => false, 'reason' => 'not configured']);
     }
-    db($config)->query('SELECT 1');
+    $pdo = db($config);
+    ensure_schema($pdo);
+    $pdo->query('SELECT 1');
     json_out(200, ['ok' => true, 'backend' => 'mysql']);
   }
 
@@ -191,6 +226,7 @@ try {
   }
 
   $pdo = db($config);
+  ensure_schema($pdo);
 
   if ($action === 'signup') {
     $name = trim((string) ($body['name'] ?? ''));
@@ -284,6 +320,49 @@ try {
     json_out(200, ['ok' => true]);
   }
 
+  if ($action === 'fields' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    $user = current_session($pdo);
+    $stmt = $pdo->prepare('SELECT * FROM fields WHERE user_id = ? ORDER BY name ASC');
+    $stmt->execute([$user['id']]);
+    json_out(200, ['fields' => array_map('field_from_row', $stmt->fetchAll())]);
+  }
+
+  if ($action === 'save-field') {
+    $user = current_session($pdo);
+    $field = $body['field'] ?? [];
+    if (!is_array($field)) json_out(400, ['message' => 'Missing field.']);
+    $id = trim((string) ($field['id'] ?? ''));
+    if ($id === '') $id = uuid();
+    $name = trim((string) ($field['name'] ?? ''));
+    if ($name === '') json_out(400, ['message' => 'Give the field a name.']);
+    $acres = $field['acres'] ?? null;
+    if ($acres === '') $acres = null;
+    $crop = trim((string) ($field['crop'] ?? ''));
+    if ($crop === '') $crop = null;
+
+    $owned = $pdo->prepare('SELECT id FROM fields WHERE id = ? AND user_id = ?');
+    $owned->execute([$id, $user['id']]);
+    if ($owned->fetch()) {
+      $pdo->prepare('UPDATE fields SET name=?, acres=?, crop=? WHERE id=? AND user_id=?')
+        ->execute([$name, $acres, $crop, $id, $user['id']]);
+    } else {
+      $pdo->prepare('INSERT INTO fields (id, user_id, name, acres, crop) VALUES (?,?,?,?,?)')
+        ->execute([$id, $user['id'], $name, $acres, $crop]);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM fields WHERE id = ? AND user_id = ?');
+    $stmt->execute([$id, $user['id']]);
+    json_out(200, ['field' => field_from_row($stmt->fetch())]);
+  }
+
+  if ($action === 'delete-field') {
+    $user = current_session($pdo);
+    $id = trim((string) ($body['id'] ?? $body['fieldId'] ?? $body['field_id'] ?? ''));
+    if ($id === '') json_out(400, ['message' => 'Missing field.']);
+    $pdo->prepare('UPDATE spray_records SET field_id = NULL WHERE field_id = ? AND user_id = ?')->execute([$id, $user['id']]);
+    $pdo->prepare('DELETE FROM fields WHERE id = ? AND user_id = ?')->execute([$id, $user['id']]);
+    json_out(200, ['ok' => true]);
+  }
+
   if ($action === 'records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     $user = current_session($pdo);
     $stmt = $pdo->prepare('SELECT * FROM spray_records WHERE user_id = ? ORDER BY applied_on DESC, created_at DESC');
@@ -300,9 +379,26 @@ try {
     $name = trim((string) ($record['name'] ?? ''));
     if ($name === '') json_out(400, ['message' => 'Give the application a name.']);
 
+    $fieldId = trim((string) ($record['fieldId'] ?? $record['field_id'] ?? ''));
+    if ($fieldId === '') $fieldId = null;
+    if ($fieldId) {
+      $ownedField = $pdo->prepare('SELECT id, name, acres, crop FROM fields WHERE id = ? AND user_id = ?');
+      $ownedField->execute([$fieldId, $user['id']]);
+      $ownedFieldRow = $ownedField->fetch();
+      if (!$ownedFieldRow) json_out(400, ['message' => 'That field is not on this account.']);
+      if (trim((string) ($record['fieldName'] ?? $record['field_name'] ?? '')) === '') {
+        $record['fieldName'] = $ownedFieldRow['name'];
+      }
+      if (($record['crop'] ?? '') === '' && $ownedFieldRow['crop']) $record['crop'] = $ownedFieldRow['crop'];
+      if (!isset($record['acres']) || $record['acres'] === '' || $record['acres'] === null) {
+        $record['acres'] = $ownedFieldRow['acres'];
+      }
+    }
+
     $fields = [
       'name' => $name,
       'applied_on' => $record['appliedOn'] ?? $record['applied_on'] ?? null,
+      'field_id' => $fieldId,
       'field_name' => $record['fieldName'] ?? $record['field_name'] ?? null,
       'acres' => $record['acres'] ?? null,
       'crop' => $record['crop'] ?? null,
@@ -332,7 +428,7 @@ try {
     if ($owned->fetch()) {
       $pdo->prepare(
         'UPDATE spray_records SET
-          name=?, applied_on=?, field_name=?, acres=?, crop=?, application_id=?, application_name=?,
+          name=?, applied_on=?, field_id=?, field_name=?, acres=?, crop=?, application_id=?, application_name=?,
           sprayer_type=?, gpa=?, mph=?, psi=?, spacing_inches=?, row_spacing_feet=?, nozzles=?,
           droplet_class=?, products=?, wind_mph=?, wind_direction=?, air_temp_f=?, humidity=?,
           applicator=?, license_no=?, notes=?, calc=?
@@ -341,10 +437,10 @@ try {
     } else {
       $pdo->prepare(
         'INSERT INTO spray_records (
-          id, user_id, name, applied_on, field_name, acres, crop, application_id, application_name,
+          id, user_id, name, applied_on, field_id, field_name, acres, crop, application_id, application_name,
           sprayer_type, gpa, mph, psi, spacing_inches, row_spacing_feet, nozzles, droplet_class,
           products, wind_mph, wind_direction, air_temp_f, humidity, applicator, license_no, notes, calc
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
       )->execute(array_merge([$id, $user['id']], array_values($fields)));
     }
     $stmt = $pdo->prepare('SELECT * FROM spray_records WHERE id = ? AND user_id = ?');

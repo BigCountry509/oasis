@@ -36,7 +36,9 @@ core.
 
 **Spray log.** Save any recommendation as a record: name, date, field, acres, crop, the nozzles and
 pressure you ran, products with EPA registration numbers and rates, wind, temperature, humidity,
-applicator and license number, and notes. Search it, edit it, and export the whole thing to CSV.
+applicator and license number, and notes. Fields live on your account (tap your name to add a name,
+acres and what is in it). When you log a spray you pick the field. The spray log lists those fields;
+open one to see its sprays. Search it, edit it, and export the whole thing to CSV.
 
 **Tools.** Catch test targets and a tip wear check that tells you when a tip is more than ten per
 cent over its rating and needs replacing, tank and acreage math, and a browsable catalog of every
@@ -63,7 +65,7 @@ Use an nginx egg that has PHP-FPM, such as tenten8401's nginx egg. Keep the egg'
    port, database name, username and password.
 3. In a MySQL client (or `mysql` from the database tab), run the contents of
    [`mysql/schema.sql`](mysql/schema.sql). That creates `users`, `sessions`,
-   `password_resets` and `spray_records`.
+   `password_resets`, `spray_records` and `fields`.
 4. Edit [`api/config.php`](api/config.php) (on the server that is
    `webroot/api/config.php`) and fill in those database values. Leave
    `site_url` blank unless password-reset emails should use a specific public URL.

@@ -886,6 +886,70 @@ details.more summary {
   margin-top: 0.7rem;
 }
 
+.log-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.8rem;
+  margin: 0 0 0.9rem;
+}
+
+.log-field-title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.farm-field {
+  appearance: none;
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.7rem;
+  color: inherit;
+  font: inherit;
+  min-height: 0;
+  cursor: pointer;
+}
+
+.farm-field:hover,
+.farm-field:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.farm-field.is-unassigned {
+  border-style: dashed;
+}
+
+.account-fields-title {
+  margin: 1.2rem 0 0.35rem;
+}
+
+.account-field-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.7rem 0 1rem;
+}
+
+.account-field-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.8rem;
+  background: var(--bg-input);
+}
+
+.account-field-form {
+  margin-bottom: 0.4rem;
+}
+
 .empty {
   text-align: center;
   padding: 2.2rem 1rem;
