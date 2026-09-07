@@ -94,6 +94,7 @@ const state = {
   fields: [],
   recordFilter: '',
   logFieldId: null,
+  editingFieldId: null,
 };
 
 const UNASSIGNED_FIELD = '__none__';
@@ -979,8 +980,8 @@ async function openRecordDialog(draft) {
   fillRecordFieldSelect(draft.fieldId || matchFieldId(draft) || '');
   const hint = $('#record-field-hint');
   hint.textContent = state.fields.length
-    ? 'Acres and crop fill in from the field. You can still change them for this spray.'
-    : 'Add fields by tapping your name at the top, then pick one here when you log a spray.';
+    ? 'Pick which field this spray went on. Acres and crop fill in from it. You can still change them for this job.'
+    : 'Add every field you have by tapping your name at the top, then pick one here.';
 
   $('#record-dialog-title').textContent = draft.id ? 'Edit this record' : 'Save this application';
 
@@ -1591,6 +1592,7 @@ function renderAccountPanel(mode = 'signin') {
             await store.signOut();
             state.fields = [];
             state.logFieldId = null;
+            state.editingFieldId = null;
             renderAccountButton();
             renderAccountPanel();
             await refreshRecords();
@@ -1668,7 +1670,7 @@ function renderAccountPanel(mode = 'signin') {
   );
 }
 
-async function renderAccountFields() {
+async function renderAccountFields(opts = {}) {
   const wrap = $('#account-fields');
   if (!wrap) return;
   fill(wrap, el('p', { class: 'muted', text: 'Loading fields…' }));
@@ -1679,24 +1681,48 @@ async function renderAccountFields() {
     return;
   }
 
+  if (state.editingFieldId && !state.fields.some((field) => field.id === state.editingFieldId)) {
+    state.editingFieldId = null;
+  }
+  const editing = state.fields.find((field) => field.id === state.editingFieldId) || null;
+
   fill(
     wrap,
-    el('h4', { class: 'account-fields-title', text: 'Your fields' }),
+    el('h4', {
+      class: 'account-fields-title',
+      text: !state.fields.length
+        ? 'Your fields'
+        : state.fields.length === 1
+          ? 'Your fields (1)'
+          : `Your fields (${state.fields.length})`,
+    }),
     el('p', {
       class: 'muted',
-      text: 'Give each field a name, the acres, and what is in it. When you log a spray you pick one of these. The spray log is grouped by field.',
+      text: 'Add every field you spray — as many as you want. North 80, the orchard, the back forty, each one. When you log a spray you pick which field it went on.',
     }),
     state.fields.length
       ? el('div', { class: 'account-field-list' }, ...state.fields.map((field) => accountFieldRow(field)))
-      : el('p', { class: 'muted', text: 'No fields yet. Add one below.' }),
-    accountFieldForm(),
+      : el('p', { class: 'muted', text: 'No fields yet. Add the first one below.' }),
+    accountFieldForm(editing),
   );
+
+  if (opts.focusName) {
+    const nameInput = wrap.querySelector('.account-field-form input[name="name"]');
+    if (nameInput) nameInput.focus();
+  }
+  if (opts.savedName) {
+    message(
+      $('#field-form-message'),
+      `${opts.savedName} is on the list. Add another field below, or close this and pick it when you log a spray.`,
+    );
+  }
 }
 
 function accountFieldRow(field) {
+  const editing = state.editingFieldId === field.id;
   return el(
     'div',
-    { class: 'account-field-row' },
+    { class: editing ? 'account-field-row is-editing' : 'account-field-row' },
     el(
       'div',
       {},
@@ -1709,55 +1735,90 @@ function accountFieldRow(field) {
           .join(' · ') || 'No acres or crop set',
       }),
     ),
-    el('button', {
-      type: 'button',
-      class: 'ghost small danger',
-      text: 'Delete',
-      onClick: async () => {
-        if (!confirm(`Delete ${field.name}? Sprays on it stay in the log, they just will not be assigned to a field.`)) {
-          return;
-        }
-        try {
-          await store.deleteField(field.id);
-          if (state.logFieldId === field.id) state.logFieldId = null;
-          await renderAccountFields();
-          await refreshRecords();
-        } catch (error) {
-          message($('#field-form-message'), error.message, true);
-        }
-      },
-    }),
+    el(
+      'div',
+      { class: 'account-field-row-actions' },
+      el('button', {
+        type: 'button',
+        class: 'ghost small',
+        text: editing ? 'Cancel' : 'Edit',
+        onClick: () => {
+          state.editingFieldId = editing ? null : field.id;
+          renderAccountFields({ focusName: true });
+        },
+      }),
+      el('button', {
+        type: 'button',
+        class: 'ghost small danger',
+        text: 'Delete',
+        onClick: async () => {
+          if (!confirm(`Delete ${field.name}? Sprays on it stay in the log, they just will not be assigned to a field.`)) {
+            return;
+          }
+          try {
+            await store.deleteField(field.id);
+            if (state.logFieldId === field.id) state.logFieldId = null;
+            if (state.editingFieldId === field.id) state.editingFieldId = null;
+            await renderAccountFields();
+            await refreshRecords();
+          } catch (error) {
+            message($('#field-form-message'), error.message, true);
+          }
+        },
+      }),
+    ),
   );
 }
 
-function accountFieldForm() {
+function accountFieldForm(editing) {
   const messageNode = el('p', { class: 'form-message', id: 'field-form-message' });
+  const addingMore = !editing && state.fields.length > 0;
   return el(
     'form',
     {
       class: 'account-field-form',
+      autocomplete: 'off',
       onSubmit: async (event) => {
         event.preventDefault();
         const data = Object.fromEntries(new FormData(event.target).entries());
         try {
-          await store.saveField({
+          const saved = await store.saveField({
+            id: editing?.id || '',
+            createdAt: editing?.createdAt || '',
             name: data.name,
             acres: data.acres,
             crop: data.crop,
           });
-          await renderAccountFields();
+          state.editingFieldId = null;
+          await renderAccountFields({
+            focusName: !editing,
+            savedName: editing ? '' : saved.name,
+          });
           await refreshRecords();
-          message($('#field-form-message'), 'Field saved. It will show up when you log a spray.');
+          if (editing) {
+            message($('#field-form-message'), `${saved.name} updated.`);
+          }
         } catch (error) {
           message(messageNode, error.message, true);
         }
       },
     },
+    el('h4', {
+      class: 'account-field-form-title',
+      text: editing ? `Edit ${editing.name}` : addingMore ? 'Add another field' : 'Add a field',
+    }),
     el(
       'label',
       { class: 'field' },
       el('span', { class: 'field-label', text: 'Field name' }),
-      el('input', { type: 'text', name: 'name', required: true, placeholder: 'North 80' }),
+      el('input', {
+        type: 'text',
+        name: 'name',
+        required: true,
+        autocomplete: 'off',
+        placeholder: addingMore ? 'South 40, home orchard…' : 'North 80',
+        value: editing?.name || '',
+      }),
     ),
     el(
       'div',
@@ -1766,20 +1827,49 @@ function accountFieldForm() {
         'label',
         { class: 'field' },
         el('span', { class: 'field-label', text: 'Acres' }),
-        el('input', { type: 'number', name: 'acres', min: '0', step: '0.1', inputmode: 'decimal', placeholder: '80' }),
+        el('input', {
+          type: 'number',
+          name: 'acres',
+          min: '0',
+          step: '0.1',
+          inputmode: 'decimal',
+          placeholder: '80',
+          value: Number.isFinite(editing?.acres) ? String(editing.acres) : '',
+        }),
       ),
       el(
         'label',
         { class: 'field' },
         el('span', { class: 'field-label', text: 'What is it' }),
-        el('input', { type: 'text', name: 'crop', placeholder: 'Corn, cherries, pasture…' }),
+        el('input', {
+          type: 'text',
+          name: 'crop',
+          autocomplete: 'off',
+          placeholder: 'Corn, cherries, pasture…',
+          value: editing?.crop || '',
+        }),
       ),
     ),
     messageNode,
     el(
       'div',
       { class: 'form-actions' },
-      el('button', { type: 'submit', class: 'primary', text: 'Save field' }),
+      el('button', {
+        type: 'submit',
+        class: 'primary',
+        text: editing ? 'Save changes' : addingMore ? 'Add another field' : 'Add field',
+      }),
+      editing
+        ? el('button', {
+            type: 'button',
+            class: 'ghost',
+            text: 'Cancel',
+            onClick: () => {
+              state.editingFieldId = null;
+              renderAccountFields();
+            },
+          })
+        : null,
     ),
   );
 }
