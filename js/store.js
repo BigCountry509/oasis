@@ -250,7 +250,21 @@ export async function signUp({ name, email, password, pin }) {
   accounts.push(account);
   writeJson(KEYS.accounts, accounts);
   setSession({ mode: 'local', accountId: account.id, name: account.name });
-  return { session, needsConfirmation: false };
+
+  /*
+   * Anything logged before there were accounts sits in the device drawer. The
+   * first account to be created takes it over, so records do not appear to
+   * vanish the moment somebody signs up.
+   */
+  if (accounts.length === 1) {
+    const orphaned = readJson(KEYS.records(DEVICE_ACCOUNT), []);
+    if (orphaned.length) {
+      writeJson(KEYS.records(account.id), orphaned);
+      localStorage.removeItem(KEYS.records(DEVICE_ACCOUNT));
+    }
+  }
+
+  return { session, needsConfirmation: false, adopted: accounts.length === 1 };
 }
 
 export async function signIn({ accountId, email, password, pin }) {

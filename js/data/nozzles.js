@@ -427,7 +427,13 @@ export function psiForFlow(gpm40, gpm) {
  * Droplet class at an arbitrary pressure. TeeJet publishes classes at fixed
  * pressure steps, so the nearest published step is used and the caller is told
  * which step the answer actually came from.
+ *
+ * The charted steps are ten PSI or more apart, so landing within a few PSI of a
+ * step is that step for practical purposes and is not worth qualifying. Only a
+ * genuine gap between charted pressures gets flagged.
  */
+const CHART_STEP_TOLERANCE = 3;
+
 export function dropletAtPsi(tip, psi) {
   const steps = tip.dropletPsiSteps;
   if (!steps.length) return { droplet: null, fromPsi: null, exact: false };
@@ -438,7 +444,7 @@ export function dropletAtPsi(tip, psi) {
   return {
     droplet: tip.droplets[best],
     fromPsi: best,
-    exact: Math.abs(best - psi) < 0.5,
+    exact: Math.abs(best - psi) <= CHART_STEP_TOLERANCE,
   };
 }
 

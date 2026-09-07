@@ -528,9 +528,17 @@ function renderAirblastResult(option, index, output) {
   const totalGpm40 = option.positions.reduce((sum, position) => sum + position.tip.gpm40, 0);
   const sidesMultiplier = output.sides === 'both' ? 2 : 1;
   const speeds = [1.5, 2, 2.5, 3, 3.5, 4];
-  const pressures = [60, 80, 100, 120, 150, 180, 200].filter(
-    (psi) => psi >= option.positions[0].tip.psiMin && psi <= option.positions[0].tip.psiMax,
-  );
+  const psiFloor = Math.max(...option.positions.map((position) => position.tip.psiMin));
+  const psiCeiling = Math.min(...option.positions.map((position) => position.tip.psiMax));
+  /* The recommended pressure is always in the table so there is a row to
+   * highlight, even when it is not one of the round numbers. */
+  const pressures = [
+    ...new Set(
+      [40, 60, 80, 100, 150, 200, 250, 300, option.psi]
+        .filter((psi) => psi >= psiFloor && psi <= psiCeiling)
+        .sort((a, b) => a - b),
+    ),
+  ];
 
   return el(
     'article',
