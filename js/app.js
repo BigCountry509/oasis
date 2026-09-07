@@ -152,7 +152,8 @@ function renderJobNotes() {
     return;
   }
   container.hidden = false;
-  container.replaceChildren(
+  fill(
+    container,
     el(
       'p',
       { class: 'muted', style: 'margin-bottom:.5rem' },
