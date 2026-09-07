@@ -333,6 +333,69 @@ export function recommendBoom(input) {
     results: ranked.slice(0, 6),
     allConsidered: candidates.length,
     noneIdeal: !candidates.some((candidate) => candidate.fit === 'ideal'),
+    unreachable: candidates.length
+      ? null
+      : boomUnreachable({ input, spacingInches, tipsPerRow, requiredGpm, limitLow, limitHigh }),
+  };
+}
+
+/*
+ * No tip at all can hit the rate. Usually the rate and speed are simply too far
+ * apart for a boom, so say which way and give the speed that fixes it, rather
+ * than showing an empty list.
+ */
+function boomUnreachable({ input, spacingInches, tipsPerRow, requiredGpm, limitLow, limitHigh }) {
+  const boomTips = TIPS.filter(
+    (tip) =>
+      tip.sprayerType === 'boom' &&
+      (!input.seriesFilter?.length || input.seriesFilter.includes(tip.seriesId)),
+  );
+  if (!boomTips.length) return null;
+
+  let maxFlow = 0;
+  let minFlow = Infinity;
+  let biggest = null;
+  let smallest = null;
+  for (const tip of boomTips) {
+    const high = Math.min(tip.psiMax, Number.isFinite(limitHigh) ? limitHigh : tip.psiMax);
+    const low = Math.max(tip.psiMin, limitLow || tip.psiMin);
+    if (low > high) continue;
+    const flowHigh = flowAtPsi(tip.gpm40, high);
+    const flowLow = flowAtPsi(tip.gpm40, low);
+    if (flowHigh > maxFlow) {
+      maxFlow = flowHigh;
+      biggest = { tip, psi: high };
+    }
+    if (flowLow < minFlow) {
+      minFlow = flowLow;
+      smallest = { tip, psi: low };
+    }
+  }
+  if (!biggest || !smallest) return null;
+
+  const tooHigh = requiredGpm > maxFlow;
+  const bound = tooHigh ? biggest : smallest;
+  const boundFlow = tooHigh ? maxFlow : minFlow;
+  const gpaAtBound = boomGpa({ gpm: boundFlow, mph: input.mph, spacingInches, tipsPerRow });
+  const speedAtBound = boomSpeed({ gpm: boundFlow, gpa: input.gpa, spacingInches, tipsPerRow });
+
+  return {
+    direction: tooHigh ? 'over' : 'under',
+    limitTip: bound.tip.partNo,
+    limitPsi: Math.round(bound.psi),
+    gpaAtLimit: gpaAtBound,
+    speedAtLimit: speedAtBound,
+    advice: tooHigh
+      ? [
+          `${fmtRate(input.gpa)} GPA at ${fmtRate(input.mph)} mph needs ${requiredGpm.toFixed(2)} GPM from every tip, which is more than any tip in the catalog will flow on ${fmtRate(spacingInches)} inch spacing.`,
+          `The largest option, ${article(bound.tip.partNo)} ${bound.tip.partNo} wide open at ${Math.round(bound.psi)} PSI, only gets you ${gpaAtBound.toFixed(0)} GPA at this speed.`,
+          `Slow to about ${speedAtBound.toFixed(1)} mph, or split the rate over two passes.`,
+        ]
+      : [
+          `${fmtRate(input.gpa)} GPA at ${fmtRate(input.mph)} mph only needs ${requiredGpm.toFixed(3)} GPM per tip, less than the smallest tip listed will flow at its lowest pressure.`,
+          `Even ${article(bound.tip.partNo)} ${bound.tip.partNo} at ${Math.round(bound.psi)} PSI puts on ${gpaAtBound.toFixed(1)} GPA at this speed.`,
+          `Speed up to about ${speedAtBound.toFixed(1)} mph, or raise the rate.`,
+        ],
   };
 }
 
@@ -693,6 +756,12 @@ function describeUnreachable({ seriesIds, positions, sides, input, totalGpm, clo
 
 function fmtRate(value) {
   return Number.isFinite(value) ? String(Math.round(value * 10) / 10) : '?';
+}
+
+/* Part numbers get read out letter by letter, so "an AIXR" and "an XR" but
+ * "a TTI". */
+function article(partNo) {
+  return /^[AEIOUFHLMNRSX]/i.test(partNo) ? 'an' : 'a';
 }
 
 /*

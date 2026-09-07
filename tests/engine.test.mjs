@@ -262,6 +262,43 @@ test('sprayer pressure limits are respected', () => {
   }
 });
 
+test('a boom rate no tip can reach is diagnosed both ways', () => {
+  const tooMuch = recommendBoom({
+    sprayerType: 'boom',
+    applicationId: 'fertilizer',
+    gpa: 60,
+    mph: 20,
+    spacingInches: 15,
+  });
+  assert.equal(tooMuch.results.length, 0);
+  assert.equal(tooMuch.unreachable?.direction, 'over');
+  assert.ok(tooMuch.unreachable.speedAtLimit < 20, 'tells the operator to slow down');
+  /* The stated limit has to be true: the biggest tip really cannot do the rate. */
+  assert.ok(tooMuch.unreachable.gpaAtLimit < 60);
+
+  const tooLittle = recommendBoom({
+    sprayerType: 'boom',
+    applicationId: 'post_systemic',
+    gpa: 2,
+    mph: 4,
+    spacingInches: 20,
+  });
+  assert.equal(tooLittle.results.length, 0);
+  assert.equal(tooLittle.unreachable?.direction, 'under');
+  assert.ok(tooLittle.unreachable.speedAtLimit > 4, 'tells the operator to speed up');
+
+  /* A normal setup must not be flagged. */
+  const normal = recommendBoom({
+    sprayerType: 'boom',
+    applicationId: 'post_systemic',
+    gpa: 15,
+    mph: 10,
+    spacingInches: 20,
+  });
+  assert.equal(normal.unreachable, null);
+  assert.ok(normal.results.length > 0);
+});
+
 test('wind raises the droplet floor', () => {
   assert.equal(windDropletFloor(3), null);
   assert.equal(windDropletFloor(9), 'M');
