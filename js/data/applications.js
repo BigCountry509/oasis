@@ -204,9 +204,9 @@ export const APPLICATIONS = [
     gpaTypical: [10, 20],
     preferSeries: ['tt', 'aixr', 'xr'],
     guidance: [
-      'Pick “Strip / band only” under the settings. Application width is how wide that strip is. Row width is the full tree or crop row.',
+      'Pick “Strip / band only” under the settings. Applied width is how wide that spray is. Row width is the full tree or crop row.',
       'GPA is gallons on the strip you spray, not the whole orchard acre. The result tells you how much of the acre is actually treated.',
-      'Tip spacing is still how far apart the nozzles are on the boom. The tool counts the tips from the strip width and the spacing, so you do not count them yourself.',
+      'Tip spacing is still how far apart the nozzles are on the boom. The tool counts the tips from the applied width and the spacing, so you do not count them yourself.',
       'Even flat fan tips keep a sharp pattern edge on a band. Set boom height so the spray lands on the strip and not in the row middle.',
     ],
   },

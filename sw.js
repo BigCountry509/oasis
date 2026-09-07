@@ -9,7 +9,7 @@
  * phones that already installed it will keep serving the old copy.
  */
 
-const CACHE_VERSION = 'nozzlecalc-v8';
+const CACHE_VERSION = 'nozzlecalc-v9';
 
 const ASSETS = [
   '.',

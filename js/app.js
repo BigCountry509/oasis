@@ -248,7 +248,7 @@ function applyJobDefaults() {
   if (state.sprayerType === 'boom' && state.boomCoverage === 'band') {
     $('#gpa-hint').textContent =
       `GPA is gallons on the strip you spray, not the whole orchard acre. This job usually runs ${job.gpaTypical[0]} to ${job.gpaTypical[1]} GPA on that strip.`;
-    $('#app-width-label').textContent = 'Strip width';
+    $('#app-width-label').textContent = 'Applied width';
     $('#app-width-hint').textContent =
       'How wide the spray is on the ground. In an orchard weed strip this is often 3 to 6 feet, not the whole row.';
   } else if (state.sprayerType === 'boom') {
@@ -373,7 +373,7 @@ function readForm() {
     if (!Number.isFinite(input.applicationWidthFeet) || input.applicationWidthFeet <= 0) {
       problems.push(
         input.coverage === 'band'
-          ? 'Enter how wide the strip is that you are spraying.'
+          ? 'Enter the applied width of the spray.'
           : 'Enter the application width of the boom.',
       );
     }
@@ -1196,7 +1196,7 @@ function renderRecord(record) {
   if (record.spacingInches) details.push(['Tip spacing', `${fmt(record.spacingInches)} in`]);
   if (record.calc?.applicationWidthFeet) {
     details.push([
-      record.calc.coverage === 'band' ? 'Strip width' : 'Application width',
+      record.calc.coverage === 'band' ? 'Applied width' : 'Application width',
       `${fmt(record.calc.applicationWidthFeet)} ft`,
     ]);
   }
